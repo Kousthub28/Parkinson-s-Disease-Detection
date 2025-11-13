@@ -41,6 +41,34 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }
 
   useEffect(() => {
+    // Set a timeout to ensure loading doesn't hang forever
+    const timeout = setTimeout(() => {
+      console.log('Auth loading timeout - setting loading to false');
+      setLoading(false);
+    }, 2000);
+
+    // Check for existing session immediately
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        console.error('Error getting session:', error);
+      }
+      
+      const currentUser = session?.user ?? null;
+      setSession(session);
+      setUser(currentUser);
+
+      if (currentUser) {
+        fetchProfile(currentUser.id).finally(() => {
+          clearTimeout(timeout);
+          setLoading(false);
+        });
+      } else {
+        setProfile(null);
+        clearTimeout(timeout);
+        setLoading(false);
+      }
+    });
+
     // onAuthStateChange fires on the initial load and any subsequent auth event.
     // This is the single source of truth for the user's session.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
@@ -61,6 +89,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     // Cleanup the subscription when the component unmounts
     return () => {
+        clearTimeout(timeout);
         subscription?.unsubscribe();
     }
   }, []);

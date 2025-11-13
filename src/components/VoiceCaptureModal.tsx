@@ -1,3 +1,4 @@
+import React from 'react';
 import { useState, useRef, useEffect } from 'react';
 import Card from './Card';
 import { Mic, X, LoaderCircle, AlertCircle, Square, Scan } from 'lucide-react';
@@ -261,6 +262,7 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
     };
 
     try {
+      let supabaseSuccess = false;
       if (savedTestId) {
         const { error: updateError } = await supabase
           .from('tests')
@@ -273,7 +275,7 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
             },
           })
           .eq('id', savedTestId);
-        if (updateError) throw updateError;
+        if (!updateError) supabaseSuccess = true;
       } else {
         const { data, error: insertError } = await supabase
           .from('tests')
@@ -290,17 +292,69 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
           })
           .select('id')
           .single();
-        if (insertError) throw insertError;
-        if (data?.id) {
+        if (!insertError && data?.id) {
           setSavedTestId(data.id);
+          supabaseSuccess = true;
         }
       }
-      setSaveMessage('Screening saved to dashboard.');
+      if (supabaseSuccess) {
+        setSaveMessage('Screening saved to dashboard.');
+      } else {
+        // Fallback: Save to localStorage under `local_tests` to match other components
+        const localKey = 'local_tests';
+        const existing = localStorage.getItem(localKey);
+        let arr: any[] = [];
+        if (existing) {
+          try { arr = JSON.parse(existing); } catch { arr = []; }
+        }
+        const localId = `local-${Date.now()}`;
+        const testRecord = {
+          id: localId,
+          patient_id: user?.id || 'local',
+          test_type: 'speech',
+          raw_storage_path: null,
+          status: 'completed',
+          created_at: new Date().toISOString(),
+          result: resultPayload,
+          confidence: result.probabilityOfParkinsons,
+          model_versions: {
+            voiceKnn: `k=${result.k}`,
+            dataset: 'pd_speech_features.csv',
+          },
+        };
+        arr.unshift(testRecord);
+        localStorage.setItem(localKey, JSON.stringify(arr));
+        setSavedTestId(localId);
+        setSaveMessage('Screening saved locally (offline mode).');
+      }
     } catch (dbError) {
-      const message = dbError instanceof Error
-        ? dbError.message
-        : 'Failed to save screening result to Supabase.';
-      setAnalysisError(message);
+      // Fallback: Save to localStorage on error under `local_tests` so History/Dashboard pick it up
+      const localKey = 'local_tests';
+      const existing = localStorage.getItem(localKey);
+      let arr: any[] = [];
+      if (existing) {
+        try { arr = JSON.parse(existing); } catch { arr = []; }
+      }
+      const localId = `local-${Date.now()}`;
+      const testRecord = {
+        id: localId,
+        patient_id: user?.id || 'local',
+        test_type: 'speech',
+        raw_storage_path: null,
+        status: 'completed',
+        created_at: new Date().toISOString(),
+        result: resultPayload,
+        confidence: result.probabilityOfParkinsons,
+        model_versions: {
+          voiceKnn: `k=${result.k}`,
+          dataset: 'pd_speech_features.csv',
+        },
+      };
+      arr.unshift(testRecord);
+      localStorage.setItem(localKey, JSON.stringify(arr));
+      setSavedTestId(localId);
+      setSaveMessage('Screening saved locally (offline mode).');
+      setAnalysisError(dbError instanceof Error ? dbError.message : 'Failed to save screening result to Supabase.');
       console.error('Failed to persist voice screening result:', dbError);
     } finally {
       setSavingResult(false);
@@ -469,36 +523,35 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
           <h3 className="text-xl font-semibold">Voice Screening (KNN Model)</h3>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X /></button>
         </div>
-        
         <div className="space-y-4 text-center">
-            {recordingStatus === 'idle' && (
-              <>
-                <p className="text-muted-foreground">Press the button to start recording your voice. You will be prompted with what to say.</p>
-                <button onClick={startRecording} className="mx-auto flex items-center justify-center w-20 h-20 rounded-full bg-red-600 hover:bg-red-700 text-white transition-colors">
-                  <Mic size={40} />
-                </button>
-              </>
-            )}
-            {recordingStatus === 'recording' && (
-              <>
-                <div className="bg-blue-900/30 border border-blue-500 rounded-lg p-4 mb-4">
-                  <p className="text-lg font-semibold text-blue-300 mb-2">Recording Prompt:</p>
-                  <p className="text-white text-base">{recordingPrompt}</p>
+          {recordingStatus === 'idle' && (
+            <div>
+              <p className="text-muted-foreground">Press the button to start recording your voice. You will be prompted with what to say.</p>
+              <button onClick={startRecording} className="mx-auto flex items-center justify-center w-20 h-20 rounded-full bg-red-600 hover:bg-red-700 text-white transition-colors">
+                <Mic size={40} />
+              </button>
+            </div>
+          )}
+          {recordingStatus === 'recording' && (
+            <>
+              <div className="bg-blue-900/30 border border-blue-500 rounded-lg p-4 mb-4">
+                <p className="text-lg font-semibold text-blue-300 mb-2">Recording Prompt:</p>
+                <p className="text-white text-base">{recordingPrompt}</p>
+              </div>
+              <div className="flex items-center justify-center space-x-4 mb-2">
+                <div className="text-2xl font-mono text-red-500 animate-pulse">
+                  {Math.floor(recordingDuration / 60)}:{String(recordingDuration % 60).padStart(2, '0')}
                 </div>
-                <div className="flex items-center justify-center space-x-4 mb-2">
-                  <div className="text-2xl font-mono text-red-500 animate-pulse">
-                    {Math.floor(recordingDuration / 60)}:{String(recordingDuration % 60).padStart(2, '0')}
-                  </div>
-                  <div className="text-sm text-muted-foreground">
-                    / {RECORDING_DURATION_SECONDS}s max
-                  </div>
+                <div className="text-sm text-muted-foreground">
+                  / {RECORDING_DURATION_SECONDS}s max
                 </div>
-                <p className="text-muted-foreground mb-4">Recording in progress... Press stop when done (min {MIN_RECORDING_DURATION_SECONDS}s).</p>
-                <button onClick={stopRecording} className="mx-auto flex items-center justify-center w-20 h-20 rounded-full bg-primary hover:bg-opacity-90 text-primary-foreground transition-colors">
-                  <Square size={30} />
-                </button>
-              </>
-            )}
+              </div>
+              <p className="text-muted-foreground mb-4">Recording in progress... Press stop when done (min {MIN_RECORDING_DURATION_SECONDS}s).</p>
+              <button onClick={stopRecording} className="mx-auto flex items-center justify-center w-20 h-20 rounded-full bg-primary hover:bg-opacity-90 text-primary-foreground transition-colors">
+                <Square size={30} />
+              </button>
+            </>
+          )}
             {recordingStatus === 'recorded' && (
               <div className="space-y-4">
                 <p className="text-muted-foreground">
@@ -624,6 +677,14 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
                               <li key={`rec-${index}`}>{item}</li>
                             ))}
                           </ul>
+                        </div>
+                        <div className="pt-2">
+                          <button
+                            onClick={onClose}
+                            className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold p-3 rounded-lg mt-2"
+                          >
+                            Return to Dashboard
+                          </button>
                         </div>
                       </div>
                     )}

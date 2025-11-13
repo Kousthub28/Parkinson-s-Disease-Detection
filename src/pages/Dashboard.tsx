@@ -1,11 +1,12 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import Card from '../components/Card';
 import Chart from '../components/Chart';
-import { Activity, FileText, BarChart, LoaderCircle, TrendingUp, PieChart, List } from 'lucide-react';
+import { Activity, FileText, BarChart, LoaderCircle, TrendingUp, PieChart, List, Calendar, Clock, FileDown } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../hooks/useAuth';
-import { Test } from '../types/database';
+import { Test, Appointment } from '../types/database';
 import { Link } from 'react-router-dom';
+import { getPrescriptionUrl } from '../utils/reportUtils';
 
 const getRiskScoreChartOption = (tests: Test[]) => {
   const chartData = tests
@@ -79,6 +80,7 @@ const getDistributionChartOption = (tests: Test[]) => {
 const Dashboard = () => {
   const { user, loading: authLoading } = useAuth();
   const [tests, setTests] = useState<Test[]>([]);
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     totalTests: 0,
@@ -86,7 +88,7 @@ const Dashboard = () => {
     lastTestDate: 'N/A',
   });
 
-  const calculateStats = useCallback((testsData: Test[]) => {
+  const calculateStats = (testsData: Test[]) => {
     if (!testsData || testsData.length === 0) {
         setStats({ totalTests: 0, avgRisk: 'N/A', lastTestDate: 'N/A' });
         return;
@@ -105,65 +107,133 @@ const Dashboard = () => {
         : 'N/A';
     
     setStats({ totalTests, avgRisk, lastTestDate: lastTestDateStr });
-  }, []);
+  };
 
-  const fetchTests = useCallback(async () => {
+  const fetchTests = async () => {
     if (!user) {
+        setLoading(false);
         return;
     }
 
     setLoading(true);
+    console.log('fetchTests - starting to fetch tests for user:', user.id);
 
-    const { data, error } = await supabase
-      .from('tests')
-      .select('*')
-      .eq('patient_id', user.id)
-      .order('created_at', { ascending: false });
+    try {
+      // Try Supabase with short timeout
+      const queryPromise = supabase
+        .from('tests')
+        .select('*')
+        .eq('patient_id', user.id)
+        .order('created_at', { ascending: false });
+      
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Query timeout')), 3000)
+      );
 
-    if (error) {
-      console.error('Error fetching tests:', error);
-    } else {
-      setTests(data ?? []);
-      calculateStats(data ?? []);
+      let supabaseTests: any[] = [];
+      
+      try {
+        const { data, error } = await Promise.race([queryPromise, timeoutPromise]) as any;
+        if (!error && data) {
+          supabaseTests = data;
+          console.log('✅ Loaded tests from Supabase:', supabaseTests.length);
+        }
+      } catch (dbError) {
+        console.warn('⚠️ Supabase not available, loading from localStorage');
+      }
+
+      // Load local tests (voice and others)
+      const localTests = [
+        ...JSON.parse(localStorage.getItem('local_tests') || '[]'),
+        ...JSON.parse(localStorage.getItem('local_test_results') || '[]'),
+      ].filter((t: any) => t.patient_id === user.id);
+      console.log('✅ Loaded tests from localStorage:', localTests.length);
+
+      // Merge and deduplicate
+      const allTests = [...localTests, ...supabaseTests];
+      const uniqueTests = Array.from(new Map(allTests.map(t => [t.id, t])).values())
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+      setTests(uniqueTests);
+      calculateStats(uniqueTests);
+      console.log('📊 Total tests displayed:', uniqueTests.length);
+    } catch (error) {
+      console.error('Failed to fetch tests:', error);
+      setTests([]);
+      calculateStats([]);
+    } finally {
+      console.log('fetchTests - setting loading to false');
+      setLoading(false);
+    }
+  };
+
+  const fetchAppointments = async () => {
+    if (!user) {
+        return;
     }
 
-    setLoading(false);
-  }, [calculateStats, user]);
+    try {
+      const { data, error } = await supabase
+        .from('appointments')
+        .select('*')
+        .eq('patient_id', user.id)
+        .order('appointment_date', { ascending: true });
+
+      if (error) {
+        console.error('Error fetching appointments:', error);
+        // Table might not exist yet - that's okay
+      } else {
+        setAppointments(data ?? []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch appointments:', error);
+      // Silently fail if appointments table doesn't exist
+    }
+  };
 
   useEffect(() => {
+    console.log('Dashboard useEffect - authLoading:', authLoading, 'user:', user);
+    
     if (authLoading) {
         return;
     }
 
     if (!user) {
+        console.log('No user - setting loading to false');
         setTests([]);
         calculateStats([]);
         setLoading(false);
         return;
     }
 
-    let isMounted = true;
+    console.log('User exists - fetching data');
+    // Call fetchTests immediately
+    fetchTests();
+    
+    // Call fetchAppointments (non-blocking)
+    fetchAppointments().catch(err => {
+      console.log('Appointments feature not available yet:', err);
+    });
 
-    const initialize = async () => {
-        if (!isMounted) return;
-        await fetchTests();
-    };
-
-    initialize();
-
-  const channel = supabase.channel('realtime-dashboard')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'tests', filter: `patient_id=eq.${user.id}`},
-    async (payload: unknown) => {
-      console.log('Realtime change received!', payload);
-            await fetchTests();
+    // Setup realtime subscriptions
+    const channel = supabase.channel('realtime-dashboard')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tests', filter: `patient_id=eq.${user.id}`},
+        (payload: unknown) => {
+          console.log('Realtime change received!', payload);
+          fetchTests();
         })
-        .subscribe();
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments', filter: `patient_id=eq.${user.id}`},
+        (payload: unknown) => {
+          console.log('Appointments realtime change!', payload);
+          fetchAppointments();
+        })
+      .subscribe();
 
     return () => {
-        isMounted = false;
         supabase.removeChannel(channel);
     };
-  }, [authLoading, user, fetchTests, calculateStats]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, user]);
 
   if (authLoading || loading) {
     return <div className="flex h-full w-full items-center justify-center"><LoaderCircle className="animate-spin h-8 w-8 text-primary" /></div>;
@@ -243,6 +313,62 @@ const Dashboard = () => {
           {tests.length === 0 && <p className="text-center text-muted-foreground py-4">You haven't performed any tests yet.</p>}
         </div>
       </Card>
+
+      {/* Appointments Section - Only show if table exists */}
+      {appointments.length > 0 || (tests.length > 0 && appointments.length === 0) ? (
+      <Card>
+        <div className="flex justify-between items-center mb-4">
+            <h3 className="font-semibold flex items-center"><Calendar size={18} className="mr-2" /> Upcoming Appointments</h3>
+            <Link to="/consult" className="text-sm font-medium text-primary-foreground hover:underline">Book New</Link>
+        </div>
+        <div className="space-y-3">
+          {appointments
+            .filter(apt => new Date(apt.appointment_date) >= new Date())
+            .slice(0, 3)
+            .map((appointment) => (
+            <div key={appointment.id} className="p-4 bg-muted rounded-lg border border-border">
+              <div className="flex items-start justify-between mb-2">
+                <div>
+                  <h4 className="font-semibold">{appointment.doctor_name}</h4>
+                  <p className="text-sm text-muted-foreground">{appointment.doctor_hospital}</p>
+                </div>
+                <span className={`text-xs px-2 py-1 rounded capitalize ${
+                  appointment.status === 'scheduled' ? 'bg-blue-500/20 text-blue-300' :
+                  appointment.status === 'completed' ? 'bg-green-500/20 text-green-300' :
+                  'bg-red-500/20 text-red-300'
+                }`}>
+                  {appointment.status}
+                </span>
+              </div>
+              <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <Calendar className="h-4 w-4" />
+                  {new Date(appointment.appointment_date).toLocaleDateString()}
+                </span>
+                <span className="flex items-center gap-1">
+                  <Clock className="h-4 w-4" />
+                  {appointment.appointment_time}
+                </span>
+              </div>
+              {appointment.prescription_storage_path && (
+                <a
+                  href={getPrescriptionUrl(appointment.prescription_storage_path)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 mt-2 text-sm text-primary-foreground hover:underline"
+                >
+                  <FileDown className="h-4 w-4" />
+                  View Prescription
+                </a>
+              )}
+            </div>
+          ))}
+          {appointments.filter(apt => new Date(apt.appointment_date) >= new Date()).length === 0 && (
+            <p className="text-center text-muted-foreground py-4">No upcoming appointments.</p>
+          )}
+        </div>
+      </Card>
+      ) : null}
     </div>
   );
 };

@@ -8,6 +8,7 @@ export type Json =
 
 export type Profile = Database['public']['Tables']['patient_profiles']['Row'];
 export type Test = Database['public']['Tables']['tests']['Row'];
+export type Appointment = Database['public']['Tables']['appointments']['Row'];
 
 export interface Database {
   public: {
@@ -112,6 +113,45 @@ export interface Database {
           order_payload?: Json | null
           status?: string | null
           external_order_id?: string | null
+        }
+      }
+      appointments: {
+        Row: {
+          id: string
+          patient_id: string
+          doctor_id: string
+          doctor_name: string
+          doctor_hospital: string | null
+          appointment_date: string
+          appointment_time: string
+          status: string
+          consultation_type: string
+          notes: string | null
+          prescription_storage_path: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          patient_id: string
+          doctor_id: string
+          doctor_name: string
+          doctor_hospital?: string | null
+          appointment_date: string
+          appointment_time: string
+          status?: string
+          consultation_type?: string
+          notes?: string | null
+          prescription_storage_path?: string | null
+        }
+        Update: {
+          appointment_date?: string
+          appointment_time?: string
+          status?: string
+          consultation_type?: string
+          notes?: string | null
+          prescription_storage_path?: string | null
+          updated_at?: string
         }
       }
     }

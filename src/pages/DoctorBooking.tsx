@@ -1,9 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Calendar, Clock, CheckCircle2, MapPin, Phone, Video, LoaderCircle, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Calendar, Clock, CheckCircle2, MapPin, Phone, Video, LoaderCircle, AlertCircle, Upload } from 'lucide-react';
 import Card from '../components/Card';
 import { getDoctorById } from '../data/parkinsonSpecialists';
 import { postChatMessage } from '../services/api';
+import { supabase } from '../lib/supabaseClient';
+import { useAuth } from '../hooks/useAuth';
+import { uploadPrescription } from '../utils/reportUtils';
 
 type SlotSelection = {
   label: string;
@@ -16,6 +19,7 @@ const DoctorBooking = () => {
   const params = useParams();
   const doctorId = params.doctorId;
   const navigate = useNavigate();
+  const { user } = useAuth();
   const doctor = doctorId ? getDoctorById(doctorId) : undefined;
 
   const [selectedSlot, setSelectedSlot] = useState<SlotSelection | null>(null);
@@ -28,6 +32,7 @@ const DoctorBooking = () => {
   const [bookingStatus, setBookingStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [bookingMessage, setBookingMessage] = useState('');
   const [sendingSummary, setSendingSummary] = useState(false);
+  const [prescriptionFile, setPrescriptionFile] = useState<File | null>(null);
 
   const recommendedSlots = useMemo(() => {
     if (!doctor) return [];
@@ -116,16 +121,67 @@ const DoctorBooking = () => {
       return;
     }
 
+    if (!user || !doctor) {
+      setBookingStatus('error');
+      setBookingMessage('You must be logged in to book an appointment.');
+      return;
+    }
+
     setBookingStatus('idle');
     setBookingMessage('');
     setSendingSummary(true);
 
-    // simulate sending summary to doctor
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    try {
+      // Upload prescription if provided
+      let prescriptionPath = null;
+      if (prescriptionFile) {
+        try {
+          prescriptionPath = await uploadPrescription(user.id, prescriptionFile);
+        } catch (error) {
+          console.error('Error uploading prescription:', error);
+          // Continue with booking even if prescription upload fails
+        }
+      }
 
-    setSendingSummary(false);
-    setBookingStatus('success');
-    setBookingMessage(`Appointment booked for ${selectedSlot.label}.${generatedSummary ? ' We\'ve sent your visit summary to the clinic.' : ''}`);
+      // Create appointment in database
+      const appointmentDate = new Date(selectedSlot.date);
+      const { error } = await supabase
+        .from('appointments')
+        .insert({
+          patient_id: user.id,
+          doctor_id: doctor.id,
+          doctor_name: doctor.name,
+          doctor_hospital: doctor.hospital,
+          appointment_date: appointmentDate.toISOString(),
+          appointment_time: selectedSlot.time,
+          status: 'scheduled',
+          consultation_type: 'in-person',
+          notes: generatedSummary || visitNotes || null,
+          prescription_storage_path: prescriptionPath
+        } as any);
+
+      if (error) {
+        console.error('Error booking appointment:', error);
+        setBookingStatus('error');
+        setBookingMessage('Failed to book appointment. Please try again.');
+        setSendingSummary(false);
+        return;
+      }
+
+      setSendingSummary(false);
+      setBookingStatus('success');
+      setBookingMessage(`Appointment booked for ${selectedSlot.label}.${generatedSummary ? ' We\'ve sent your visit summary to the clinic.' : ''}`);
+      
+      // Redirect to dashboard after success
+      setTimeout(() => {
+        navigate('/dashboard');
+      }, 2000);
+    } catch (error) {
+      console.error('Error in booking process:', error);
+      setSendingSummary(false);
+      setBookingStatus('error');
+      setBookingMessage('An unexpected error occurred. Please try again.');
+    }
   };
 
   if (!doctor) {
@@ -251,6 +307,34 @@ const DoctorBooking = () => {
               placeholder="Example: Recent tremor increase in evenings, medication wearing off by 7pm, AI gait prediction suggests higher fall risk, need guidance on adjusting levodopa timing."
               className="w-full min-h-[120px] rounded-lg border border-border bg-card px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
             />
+            
+            {/* Prescription Upload */}
+            <div className="space-y-2">
+              <label className="block text-sm font-semibold">
+                <Upload className="inline h-4 w-4 mr-2" />
+                Previous Prescription (Optional)
+              </label>
+              <div className="flex items-center gap-4">
+                <label className="flex-1 flex items-center justify-center gap-2 p-4 rounded-lg border-2 border-dashed border-border hover:border-primary/50 cursor-pointer transition">
+                  <Upload className="h-5 w-5" />
+                  <span className="text-sm">
+                    {prescriptionFile ? prescriptionFile.name : 'Choose file to upload'}
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/*,.pdf"
+                    onChange={(e) => setPrescriptionFile(e.target.files?.[0] || null)}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+              {prescriptionFile && (
+                <p className="text-xs text-muted-foreground">
+                  File ready to upload: {prescriptionFile.name}
+                </p>
+              )}
+            </div>
+
             <button
               onClick={handleGenerateSummary}
               disabled={generatingSummary}
