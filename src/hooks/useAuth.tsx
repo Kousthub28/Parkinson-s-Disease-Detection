@@ -21,17 +21,44 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = async (userId: string) => {
-    const { data, error } = await supabase
-      .from('patient_profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
-    
-    if (error && error.code !== 'PGRST116') { // PGRST116 = no rows found
-      console.error('Error fetching profile:', error);
+    try {
+      const { data, error } = await supabase
+        .from('patient_profiles')
+        .select('*')
+        .eq('id', userId)
+        .single();
+      
+      if (error && error.code !== 'PGRST116') { // PGRST116 = no rows found
+        console.warn('Error fetching profile from Supabase:', error);
+        // Try localStorage fallback
+        const localProfile = localStorage.getItem('user_profile');
+        if (localProfile) {
+          const parsedProfile = JSON.parse(localProfile);
+          if (parsedProfile.id === userId) {
+            console.log('✅ Loaded profile from localStorage');
+            setProfile(parsedProfile);
+            return parsedProfile;
+          }
+        }
+      } else if (data) {
+        setProfile(data);
+        // Update localStorage cache
+        localStorage.setItem('user_profile', JSON.stringify(data));
+        return data;
+      }
+    } catch (error) {
+      console.error('Failed to fetch profile:', error);
+      // Try localStorage as last resort
+      const localProfile = localStorage.getItem('user_profile');
+      if (localProfile) {
+        const parsedProfile = JSON.parse(localProfile);
+        if (parsedProfile.id === userId) {
+          setProfile(parsedProfile);
+          return parsedProfile;
+        }
+      }
     }
-    setProfile(data);
-    return data;
+    return null;
   };
 
   const refreshProfile = async () => {
@@ -95,7 +122,31 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   const logout = async () => {
-    await supabase.auth.signOut();
+    try {
+      // Clear all localStorage data
+      localStorage.removeItem('user_profile');
+      localStorage.removeItem('dashboard_cache');
+      localStorage.removeItem('local_tests');
+      localStorage.removeItem('local_test_results');
+      
+      // Sign out from Supabase
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.error('Error signing out:', error);
+      }
+      
+      // Clear state immediately
+      setUser(null);
+      setProfile(null);
+      setSession(null);
+      
+      // Redirect to login page
+      window.location.href = '/login';
+    } catch (error) {
+      console.error('Logout failed:', error);
+      // Force redirect even if error
+      window.location.href = '/login';
+    }
   };
 
   const value = {

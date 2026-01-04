@@ -12,8 +12,9 @@ const Card = ({ children, className = '', ...rest }: CardProps) => {
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5 }}
-      className={`bg-card border border-border rounded-xl shadow-lg p-6 ${className}`}
+      transition={{ duration: 0.5, ease: "easeOut" }}
+      whileHover={{ scale: 1.02, transition: { duration: 0.2 } }}
+      className={`bg-white border border-gray-200 rounded-2xl shadow-md hover:shadow-xl p-6 transition-all ${className}`}
       {...rest}
     >
       {children}

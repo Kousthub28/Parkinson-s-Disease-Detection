@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BrainCircuit, AlertCircle, LoaderCircle } from 'lucide-react';
+import { AlertCircle, LoaderCircle, Mail, Lock, User, CheckCircle, Sparkles } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../hooks/useAuth';
+import { motion } from 'framer-motion';
+import Logo from '../components/Logo';
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -75,57 +77,177 @@ const Auth = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <div className="w-full max-w-md bg-card p-8 rounded-xl shadow-lg border border-border">
-        <div className="text-center mb-8">
-          <BrainCircuit className="mx-auto h-12 w-12 text-primary-foreground" />
-          <h1 className="text-3xl font-bold mt-4">
-            {isLogin ? 'Welcome Back' : 'Create Account'}
-          </h1>
-          <p className="text-muted-foreground">
-            {isLogin ? 'Sign in to continue to NeuroCare' : 'Join us to take control of your health'}
-          </p>
-        </div>
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50 p-4 relative overflow-hidden">
+      {/* Animated background blobs */}
+      <div className="absolute top-0 left-0 w-96 h-96 bg-blue-200 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob" />
+      <div className="absolute top-0 right-0 w-96 h-96 bg-purple-200 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob animation-delay-2000" />
+      <div className="absolute bottom-0 left-1/2 w-96 h-96 bg-pink-200 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-blob animation-delay-4000" />
+      
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="w-full max-w-md relative z-10"
+      >
+        <div className="bg-white p-8 rounded-2xl shadow-2xl border border-gray-100">
+          {/* Logo and Header */}
+          <div className="text-center mb-8">
+            <div className="flex justify-center mb-4">
+              <Logo size="lg" />
+            </div>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.2 }}
+            >
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-sm font-medium mb-3">
+                <Sparkles className="h-4 w-4" />
+                <span>AI-Powered Care</span>
+              </div>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                {isLogin ? 'Welcome Back' : 'Create Account'}
+              </h1>
+              <p className="text-gray-600">
+                {isLogin ? 'Sign in to continue your health journey' : 'Join us to take control of your health'}
+              </p>
+            </motion.div>
+          </div>
 
-        <form onSubmit={handleAuth} className="space-y-4">
-          {!isLogin && (
-             <input type="text" placeholder="Full Name" required value={fullName} onChange={e => setFullName(e.target.value)} className="w-full bg-input p-3 rounded-lg border border-border focus:ring-2 focus:ring-primary focus:outline-none" />
-          )}
-          <input type="email" placeholder="Email Address" required value={email} onChange={e => setEmail(e.target.value)} className="w-full bg-input p-3 rounded-lg border border-border focus:ring-2 focus:ring-primary focus:outline-none" />
-          <input type="password" placeholder="Password" required value={password} onChange={e => setPassword(e.target.value)} className="w-full bg-input p-3 rounded-lg border border-border focus:ring-2 focus:ring-primary focus:outline-none" />
+          <form onSubmit={handleAuth} className="space-y-4">
+            {!isLogin && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+              >
+                <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                  <input 
+                    type="text" 
+                    placeholder="Enter your full name" 
+                    required 
+                    value={fullName} 
+                    onChange={e => setFullName(e.target.value)} 
+                    className="w-full bg-white text-gray-900 pl-10 pr-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition-all"
+                  />
+                </div>
+              </motion.div>
+            )}
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                <input 
+                  type="email" 
+                  placeholder="Enter your email" 
+                  required 
+                  value={email} 
+                  onChange={e => setEmail(e.target.value)} 
+                  className="w-full bg-white text-gray-900 pl-10 pr-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition-all"
+                />
+              </div>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                <input 
+                  type="password" 
+                  placeholder="Enter your password" 
+                  required 
+                  value={password} 
+                  onChange={e => setPassword(e.target.value)} 
+                  className="w-full bg-white text-gray-900 pl-10 pr-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition-all"
+                />
+              </div>
+            </div>
           
-          {!isLogin && (
-            <div className="flex items-start space-x-2">
-                <input type="checkbox" id="consent" required checked={consent} onChange={(e) => setConsent(e.target.checked)} className="mt-1 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"/>
-                <label htmlFor="consent" className="text-sm text-muted-foreground">
-                    I consent to the use of my camera/mic and the processing of my medical data for analysis, as described in the <a href="#" className="underline text-primary-foreground">Privacy Policy</a>.
+            {!isLogin && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="flex items-start space-x-3 p-4 bg-blue-50 rounded-lg border border-blue-100"
+              >
+                <input 
+                  type="checkbox" 
+                  id="consent" 
+                  required 
+                  checked={consent} 
+                  onChange={(e) => setConsent(e.target.checked)} 
+                  className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="consent" className="text-sm text-gray-700 leading-relaxed">
+                  I consent to the use of my camera/microphone and the processing of my medical data for analysis, as described in the <a href="#" className="underline text-blue-600 hover:text-blue-700 font-medium">Privacy Policy</a>.
                 </label>
-            </div>
-          )}
+              </motion.div>
+            )}
 
-          {error && (
-            <div className="flex items-center space-x-2 text-red-400 bg-red-900/20 p-3 rounded-lg">
-              <AlertCircle size={20} />
-              <p className="text-sm">{error}</p>
-            </div>
-          )}
-          {message && (
-            <div className="flex items-center space-x-2 text-green-400 bg-green-900/20 p-3 rounded-lg">
-              <p className="text-sm">{message}</p>
-            </div>
-          )}
+            {error && (
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-center space-x-2 text-red-700 bg-red-50 p-3 rounded-lg border border-red-200"
+              >
+                <AlertCircle size={20} className="flex-shrink-0" />
+                <p className="text-sm">{error}</p>
+              </motion.div>
+            )}
+            {message && (
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-center space-x-2 text-green-700 bg-green-50 p-3 rounded-lg border border-green-200"
+              >
+                <CheckCircle size={20} className="flex-shrink-0" />
+                <p className="text-sm">{message}</p>
+              </motion.div>
+            )}
 
-          <button type="submit" disabled={loading} className="w-full bg-primary text-primary-foreground font-semibold p-3 rounded-lg hover:bg-opacity-90 transition-colors flex items-center justify-center disabled:opacity-50">
-            {loading ? <LoaderCircle className="animate-spin" /> : (isLogin ? 'Login' : 'Sign Up')}
-          </button>
-        </form>
+            <button 
+              type="submit" 
+              disabled={loading} 
+              className="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white font-semibold py-3 rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all shadow-lg hover:shadow-xl flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-[1.02] active:scale-[0.98]"
+            >
+              {loading ? (
+                <LoaderCircle className="animate-spin h-5 w-5" />
+              ) : (
+                <span>{isLogin ? 'Sign In' : 'Create Account'}</span>
+              )}
+            </button>
+          </form>
 
-        <div className="text-center mt-6">
-          <button onClick={() => { setIsLogin(!isLogin); setError(null); setMessage(null); }} className="text-sm text-muted-foreground hover:text-foreground">
-            {isLogin ? "Don't have an account? Sign Up" : 'Already have an account? Login'}
-          </button>
+          <div className="mt-6">
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-gray-200"></div>
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="px-2 bg-white text-gray-500">
+                  {isLogin ? "Don't have an account?" : 'Already have an account?'}
+                </span>
+              </div>
+            </div>
+            <button 
+              onClick={() => { setIsLogin(!isLogin); setError(null); setMessage(null); }} 
+              className="mt-4 w-full text-blue-600 hover:text-blue-700 font-medium py-2 rounded-lg hover:bg-blue-50 transition-colors"
+            >
+              {isLogin ? 'Sign Up' : 'Sign In'}
+            </button>
+          </div>
         </div>
-      </div>
+        
+        {/* Footer */}
+        <p className="text-center text-sm text-gray-600 mt-6">
+          By continuing, you agree to our{' '}
+          <a href="#" className="text-blue-600 hover:text-blue-700 underline">Terms of Service</a>
+          {' '}and{' '}
+          <a href="#" className="text-blue-600 hover:text-blue-700 underline">Privacy Policy</a>
+        </p>
+      </motion.div>
     </div>
   );
 };

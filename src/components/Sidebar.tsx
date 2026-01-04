@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, FilePlus, History, Bot, Stethoscope, ShoppingCart, LogOut, BrainCircuit, Settings } from 'lucide-react';
+import { LayoutDashboard, FilePlus, History, Bot, Stethoscope, ShoppingCart, LogOut, Settings } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
+import Logo from './Logo';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -16,10 +17,9 @@ const Sidebar = () => {
   const { logout } = useAuth();
 
   return (
-    <aside className="w-64 bg-card border-r border-border flex flex-col">
-      <div className="p-6 flex items-center space-x-2 border-b border-border">
-        <BrainCircuit className="text-primary-foreground h-8 w-8" />
-        <h1 className="text-xl font-bold text-primary-foreground">NeuroCare</h1>
+    <aside className="w-64 bg-white border-r border-gray-200 flex flex-col shadow-sm">
+      <div className="p-6 border-b border-gray-200">
+        <Logo size="md" />
       </div>
       <nav className="flex-1 px-4 py-6 space-y-2">
         {navItems.map((item) => (
@@ -28,8 +28,8 @@ const Sidebar = () => {
             to={item.href}
             className={`flex items-center space-x-3 px-4 py-2 rounded-lg transition-colors ${
               location.pathname.startsWith(item.href)
-                ? 'bg-accent text-accent-foreground'
-                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                ? 'bg-blue-50 text-blue-700 font-medium'
+                : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
             }`}
           >
             <item.icon size={20} />
@@ -37,13 +37,13 @@ const Sidebar = () => {
           </Link>
         ))}
       </nav>
-      <div className="p-4 border-t border-border space-y-2">
+      <div className="p-4 border-t border-gray-200 space-y-2">
          <Link
             to="/profile"
             className={`w-full flex items-center space-x-3 px-4 py-2 rounded-lg transition-colors ${
               location.pathname.startsWith('/profile')
-                ? 'bg-accent text-accent-foreground'
-                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                ? 'bg-blue-50 text-blue-700 font-medium'
+                : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
             }`}
           >
             <Settings size={20} />
@@ -51,7 +51,7 @@ const Sidebar = () => {
         </Link>
          <button
             onClick={logout}
-            className="w-full flex items-center space-x-3 px-4 py-2 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            className="w-full flex items-center space-x-3 px-4 py-2 rounded-lg text-gray-700 hover:bg-red-50 hover:text-red-600 transition-colors"
           >
             <LogOut size={20} />
             <span className="font-medium">Logout</span>

@@ -23,25 +23,25 @@ const getRiskScoreChartOption = (tests: Test[]) => {
     xAxis: {
       type: 'category',
       data: chartData.map(d => d.date),
-      axisLine: { lineStyle: { color: '#4A5568' } },
+      axisLine: { lineStyle: { color: '#9CA3AF' } },
     },
     yAxis: {
       type: 'value',
       min: 0,
       max: 10,
-      axisLine: { lineStyle: { color: '#4A5568' } },
-      splitLine: { lineStyle: { color: '#2D3748' } },
+      axisLine: { lineStyle: { color: '#9CA3AF' } },
+      splitLine: { lineStyle: { color: '#E5E7EB' } },
     },
     series: [{
       name: 'Risk Score',
       type: 'line',
       smooth: true,
       data: chartData.map(d => d.score),
-      itemStyle: { color: '#38bdf8' },
+      itemStyle: { color: '#2563EB' },
       areaStyle: {
           color: {
               type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-              colorStops: [{ offset: 0, color: '#38bdf8' }, { offset: 1, color: 'rgba(56, 189, 248, 0)' }]
+              colorStops: [{ offset: 0, color: 'rgba(37, 99, 235, 0.5)' }, { offset: 1, color: 'rgba(37, 99, 235, 0)' }]
           }
       }
     }],
@@ -61,7 +61,7 @@ const getDistributionChartOption = (tests: Test[]) => {
         legend: {
             orient: 'vertical',
             left: 'left',
-            textStyle: { color: '#A0AEC0' }
+            textStyle: { color: '#4B5563' }
         },
         series: [{
             name: 'Test Types',
@@ -70,9 +70,10 @@ const getDistributionChartOption = (tests: Test[]) => {
             avoidLabelOverlap: false,
             label: { show: false },
             emphasis: {
-                label: { show: true, fontSize: '20', fontWeight: 'bold' }
+                label: { show: true, fontSize: '20', fontWeight: 'bold', color: '#1F2937' }
             },
             data: Object.entries(distribution).map(([name, value]) => ({ value, name })),
+            color: ['#2563EB', '#3B82F6', '#60A5FA', '#93C5FD', '#DBEAFE']
         }]
     };
 };
@@ -82,6 +83,7 @@ const Dashboard = () => {
   const [tests, setTests] = useState<Test[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [stats, setStats] = useState({
     totalTests: 0,
     avgRisk: 'N/A',
@@ -109,13 +111,17 @@ const Dashboard = () => {
     setStats({ totalTests, avgRisk, lastTestDate: lastTestDateStr });
   };
 
-  const fetchTests = async () => {
+  const fetchTests = async (silent = false) => {
     if (!user) {
         setLoading(false);
+        setInitialLoadComplete(true);
         return;
     }
 
-    setLoading(true);
+    // Only show spinner on initial load, not on refreshes
+    if (!silent && !initialLoadComplete) {
+        setLoading(true);
+    }
     console.log('fetchTests - starting to fetch tests for user:', user.id);
 
     try {
@@ -127,7 +133,7 @@ const Dashboard = () => {
         .order('created_at', { ascending: false });
       
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Query timeout')), 3000)
+        setTimeout(() => reject(new Error('Query timeout')), 2000)
       );
 
       let supabaseTests: any[] = [];
@@ -156,6 +162,13 @@ const Dashboard = () => {
 
       setTests(uniqueTests);
       calculateStats(uniqueTests);
+      
+      // Cache data in localStorage for instant load next time
+      localStorage.setItem('dashboard_cache', JSON.stringify({
+        tests: uniqueTests,
+        timestamp: Date.now()
+      }));
+      
       console.log('📊 Total tests displayed:', uniqueTests.length);
     } catch (error) {
       console.error('Failed to fetch tests:', error);
@@ -164,6 +177,7 @@ const Dashboard = () => {
     } finally {
       console.log('fetchTests - setting loading to false');
       setLoading(false);
+      setInitialLoadComplete(true);
     }
   };
 
@@ -207,6 +221,28 @@ const Dashboard = () => {
     }
 
     console.log('User exists - fetching data');
+    
+    // Load from cache immediately for instant display
+    const cachedData = localStorage.getItem('dashboard_cache');
+    if (cachedData) {
+      try {
+        const { tests: cachedTests, timestamp } = JSON.parse(cachedData);
+        // Use cache if less than 30 seconds old
+        if (Date.now() - timestamp < 30000) {
+          console.log('📦 Loading from cache for instant display');
+          setTests(cachedTests);
+          calculateStats(cachedTests);
+          setLoading(false);
+          setInitialLoadComplete(true);
+          // Still fetch in background to update
+          fetchTests(true);
+          return;
+        }
+      } catch (e) {
+        console.log('Cache parse error:', e);
+      }
+    }
+    
     // Call fetchTests immediately
     fetchTests();
     
@@ -229,8 +265,26 @@ const Dashboard = () => {
         })
       .subscribe();
 
+    // Poll localStorage for new tests every 5 seconds for real-time updates (silent)
+    const pollInterval = setInterval(() => {
+      console.log('🔄 Polling for new tests...');
+      fetchTests(true); // Silent refresh
+    }, 5000);
+
+    // Listen for storage events from other tabs/windows
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'local_tests' || e.key === 'local_test_results') {
+        console.log('📢 Storage change detected, refreshing tests...');
+        fetchTests(true); // Silent refresh
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+
     return () => {
         supabase.removeChannel(channel);
+        clearInterval(pollInterval);
+        window.removeEventListener('storage', handleStorageChange);
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user]);
@@ -261,56 +315,56 @@ const Dashboard = () => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card>
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-muted-foreground">Total Tests</p>
-            <BarChart className="h-5 w-5 text-muted-foreground" />
+            <p className="text-sm font-medium text-gray-600">Total Tests</p>
+            <BarChart className="h-5 w-5 text-blue-600" />
           </div>
-          <p className="text-2xl font-bold mt-2">{stats.totalTests}</p>
+          <p className="text-2xl font-bold mt-2 text-gray-900">{stats.totalTests}</p>
         </Card>
         <Card>
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-muted-foreground">Average Risk</p>
-            <Activity className="h-5 w-5 text-muted-foreground" />
+            <p className="text-sm font-medium text-gray-600">Average Risk</p>
+            <Activity className="h-5 w-5 text-blue-600" />
           </div>
-          <p className="text-2xl font-bold mt-2 text-yellow-400">{stats.avgRisk} / 10</p>
+          <p className="text-2xl font-bold mt-2 text-orange-500">{stats.avgRisk} / 10</p>
         </Card>
         <Card>
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-muted-foreground">Last Test</p>
-            <FileText className="h-5 w-5 text-muted-foreground" />
+            <p className="text-sm font-medium text-gray-600">Last Test</p>
+            <FileText className="h-5 w-5 text-blue-600" />
           </div>
-          <p className="text-2xl font-bold mt-2">{stats.lastTestDate}</p>
+          <p className="text-2xl font-bold mt-2 text-gray-900">{stats.lastTestDate}</p>
         </Card>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         <Card className="lg:col-span-3 h-80">
-            <h3 className="font-semibold mb-4 flex items-center"><TrendingUp size={18} className="mr-2" /> Risk Score Over Time</h3>
-            {tests.length > 0 ? <Chart option={getRiskScoreChartOption(tests)} /> : <p className="text-center text-muted-foreground pt-16">No test results yet.</p>}
+            <h3 className="font-semibold mb-4 flex items-center text-gray-900"><TrendingUp size={18} className="mr-2 text-blue-600" /> Risk Score Over Time</h3>
+            {tests.length > 0 ? <Chart option={getRiskScoreChartOption(tests)} /> : <p className="text-center text-gray-600 pt-16">No test results yet.</p>}
         </Card>
         <Card className="lg:col-span-2 h-80">
-            <h3 className="font-semibold mb-4 flex items-center"><PieChart size={18} className="mr-2" /> Test Type Distribution</h3>
-            {tests.length > 0 ? <Chart option={getDistributionChartOption(tests)} /> : <p className="text-center text-muted-foreground pt-16">No tests performed yet.</p>}
+            <h3 className="font-semibold mb-4 flex items-center text-gray-900"><PieChart size={18} className="mr-2 text-blue-600" /> Test Type Distribution</h3>
+            {tests.length > 0 ? <Chart option={getDistributionChartOption(tests)} /> : <p className="text-center text-gray-600 pt-16">No tests performed yet.</p>}
         </Card>
       </div>
 
       <Card>
         <div className="flex justify-between items-center mb-4">
-            <h3 className="font-semibold flex items-center"><List size={18} className="mr-2" /> Recent Tests</h3>
-            <Link to="/history" className="text-sm font-medium text-primary-foreground hover:underline">View All</Link>
+            <h3 className="font-semibold flex items-center text-gray-900"><List size={18} className="mr-2 text-blue-600" /> Recent Tests</h3>
+            <Link to="/history" className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline">View All</Link>
         </div>
         <div className="space-y-2">
           {tests.slice(0, 3).map((item) => (
-            <div key={item.id} className="flex items-center justify-between p-3 bg-muted rounded-lg">
+            <div key={item.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
               <div className="flex items-center space-x-4">
-                <span className="font-medium capitalize">{item.test_type} Test</span>
-                <span className="text-sm text-muted-foreground">{new Date(item.created_at).toLocaleDateString()}</span>
+                <span className="font-medium capitalize text-gray-900">{item.test_type} Test</span>
+                <span className="text-sm text-gray-600">{new Date(item.created_at).toLocaleDateString()}</span>
               </div>
-              <span className="text-sm font-semibold text-primary-foreground bg-accent px-2 py-1 rounded capitalize">
+              <span className="text-sm font-semibold text-blue-600 bg-blue-50 px-3 py-1 rounded-full capitalize">
                 { (item.result as any)?.riskScore ? `Risk: ${(item.result as any).riskScore}/10` : 'Processing...' }
               </span>
             </div>
           ))}
-          {tests.length === 0 && <p className="text-center text-muted-foreground py-4">You haven't performed any tests yet.</p>}
+          {tests.length === 0 && <p className="text-center text-gray-600 py-4">You haven't performed any tests yet.</p>}
         </div>
       </Card>
 
@@ -318,29 +372,29 @@ const Dashboard = () => {
       {appointments.length > 0 || (tests.length > 0 && appointments.length === 0) ? (
       <Card>
         <div className="flex justify-between items-center mb-4">
-            <h3 className="font-semibold flex items-center"><Calendar size={18} className="mr-2" /> Upcoming Appointments</h3>
-            <Link to="/consult" className="text-sm font-medium text-primary-foreground hover:underline">Book New</Link>
+            <h3 className="font-semibold flex items-center text-gray-900"><Calendar size={18} className="mr-2 text-blue-600" /> Upcoming Appointments</h3>
+            <Link to="/consult" className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline">Book New</Link>
         </div>
         <div className="space-y-3">
           {appointments
             .filter(apt => new Date(apt.appointment_date) >= new Date())
             .slice(0, 3)
             .map((appointment) => (
-            <div key={appointment.id} className="p-4 bg-muted rounded-lg border border-border">
+            <div key={appointment.id} className="p-4 bg-gray-50 rounded-lg border border-gray-200 hover:border-blue-300 transition-colors">
               <div className="flex items-start justify-between mb-2">
                 <div>
-                  <h4 className="font-semibold">{appointment.doctor_name}</h4>
-                  <p className="text-sm text-muted-foreground">{appointment.doctor_hospital}</p>
+                  <h4 className="font-semibold text-gray-900">{appointment.doctor_name}</h4>
+                  <p className="text-sm text-gray-600">{appointment.doctor_hospital}</p>
                 </div>
-                <span className={`text-xs px-2 py-1 rounded capitalize ${
-                  appointment.status === 'scheduled' ? 'bg-blue-500/20 text-blue-300' :
-                  appointment.status === 'completed' ? 'bg-green-500/20 text-green-300' :
-                  'bg-red-500/20 text-red-300'
+                <span className={`text-xs px-2 py-1 rounded-full capitalize ${
+                  appointment.status === 'scheduled' ? 'bg-blue-100 text-blue-700' :
+                  appointment.status === 'completed' ? 'bg-green-100 text-green-700' :
+                  'bg-red-100 text-red-700'
                 }`}>
                   {appointment.status}
                 </span>
               </div>
-              <div className="flex items-center gap-4 text-sm text-muted-foreground">
+              <div className="flex items-center gap-4 text-sm text-gray-600">
                 <span className="flex items-center gap-1">
                   <Calendar className="h-4 w-4" />
                   {new Date(appointment.appointment_date).toLocaleDateString()}
@@ -355,7 +409,7 @@ const Dashboard = () => {
                   href={getPrescriptionUrl(appointment.prescription_storage_path)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-2 mt-2 text-sm text-primary-foreground hover:underline"
+                  className="flex items-center gap-2 mt-2 text-sm text-blue-600 hover:text-blue-700 hover:underline"
                 >
                   <FileDown className="h-4 w-4" />
                   View Prescription
@@ -364,7 +418,7 @@ const Dashboard = () => {
             </div>
           ))}
           {appointments.filter(apt => new Date(apt.appointment_date) >= new Date()).length === 0 && (
-            <p className="text-center text-muted-foreground py-4">No upcoming appointments.</p>
+            <p className="text-center text-gray-600 py-4">No upcoming appointments.</p>
           )}
         </div>
       </Card>

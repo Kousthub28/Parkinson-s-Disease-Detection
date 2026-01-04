@@ -10,6 +10,9 @@ export type Profile = Database['public']['Tables']['patient_profiles']['Row'];
 export type Test = Database['public']['Tables']['tests']['Row'];
 export type Appointment = Database['public']['Tables']['appointments']['Row'];
 
+export type HandwritingClass = 'Parkinsons' | 'Healthy';
+export type HandwritingType = 'spiral' | 'wave';
+
 export interface Database {
   public: {
     Tables: {

@@ -19,3 +19,8 @@ Thumbs.db
 *.log
 *.sqlite
 *.db
+
+# Large model files (>100MB)
+*.h5
+*.keras
+public/models/

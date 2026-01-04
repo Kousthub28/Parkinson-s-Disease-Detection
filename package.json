@@ -14,7 +14,7 @@
   "dependencies": {
     "@faker-js/faker": "^10.1.0",
     "@supabase/supabase-js": "^2.76.1",
-    "@tensorflow-models/mobilenet": "^2.1.0",
+    "@tensorflow-models/mobilenet": "^2.1.1",
     "@tensorflow/tfjs": "^4.22.0",
     "@tensorflow/tfjs-backend-webgl": "^4.22.0",
     "axios": "^1.9.0",
@@ -29,6 +29,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.27.0",
+    "@tensorflow/tfjs-converter": "^4.22.0",
+    "@tensorflow/tfjs-node": "^4.22.0",
     "@types/faker": "^6.6.11",
     "@types/react": "^19.1.5",
     "@types/react-dom": "^19.1.5",

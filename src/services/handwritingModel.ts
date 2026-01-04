@@ -1,160 +1,172 @@
-type HandwritingType = 'spiral' | 'wave';
-type HandwritingClass = 'Parkinsons' | 'Healthy';
+﻿import type { HandwritingClass, HandwritingType } from '../types/database';
 
-interface ModelConfig {
-	path: string;
-	inputSize: number;
-	description: string;
-}
-
-export interface HandwritingPrediction {
-	label: HandwritingClass;
-	confidence: number;
-	probabilities: Record<HandwritingClass, number>;
-	modelUsed: HandwritingType;
-	summary: string;
-}
-
-const MODEL_CONFIG: Record<HandwritingType, ModelConfig> = {
-	spiral: {
-		path: '/models/spiral/model.json',
-		inputSize: 224,
-		description: 'MobileNetV2 base fine-tuned on spiral drawings',
-	},
-	wave: {
-		path: '/models/wave/model.json',
-		inputSize: 224,
-		description: 'VGG16 base fine-tuned on wave drawings',
-	},
-};
-
-let tfModule: typeof import('@tensorflow/tfjs') | null = null;
-const modelCache: Partial<Record<HandwritingType, Promise<import('@tensorflow/tfjs').LayersModel>>> = {};
+let tensorflowInstance: typeof import('@tensorflow/tfjs') | null = null;
+let mobilenetModel: any = null;
 
 async function loadTensorflow() {
-	if (!tfModule) {
-		tfModule = await import('@tensorflow/tfjs');
-		// use WebGL backend when available for better performance
-		try {
-					if (tfModule.getBackend() !== 'webgl') {
-				await tfModule.setBackend('webgl');
-				await tfModule.ready();
-			}
-		} catch (error) {
-			console.warn('Unable to initialise WebGL backend for TensorFlow.js; falling back to default.', error);
-		}
-	}
-	return tfModule;
+  if (!tensorflowInstance) {
+    console.log('[TF] Loading TensorFlow.js...');
+    tensorflowInstance = await import('@tensorflow/tfjs');
+    await tensorflowInstance.ready();
+    console.log('[TF] Backend:', tensorflowInstance.getBackend());
+  }
+  return tensorflowInstance;
 }
 
-async function loadModel(type: HandwritingType) {
-	if (!modelCache[type]) {
-		const tf = await loadTensorflow();
-		const config = MODEL_CONFIG[type];
-		modelCache[type] = tf
-			.loadLayersModel(config.path)
-			.catch((error) => {
-				console.error(`Unable to load ${type} handwriting model from ${config.path}`, error);
-				throw new Error(
-					`Failed to load the ${type} handwriting model. Ensure you have trained the model and exported it to ${config.path}.`
-				);
-			});
-	}
-	return modelCache[type]!;
+async function loadMobileNet() {
+  if (!mobilenetModel) {
+    console.log('[MobileNet] Loading pre-trained MobileNetV2...');
+    const tf = await loadTensorflow();
+    
+    // Load MobileNetV2 from TensorFlow.js Hub
+    const mobilenet = await import('@tensorflow-models/mobilenet');
+    mobilenetModel = await mobilenet.load({
+      version: 2,
+      alpha: 1.0,
+    });
+    console.log('[MobileNet] ✓ Loaded successfully');
+  }
+  return mobilenetModel;
 }
 
-function normaliseLabel(probabilities: Float32Array): {
-	label: HandwritingClass;
-	confidence: number;
-	probabilities: Record<HandwritingClass, number>;
+function normaliseLabel(output: Float32Array): {
+  label: HandwritingClass;
+  confidence: number;
+  probabilities: Record<HandwritingClass, number>;
 } {
-	if (probabilities.length < 2) {
-		return {
-			label: 'Parkinsons',
-			confidence: 0,
-			probabilities: {
-				Parkinsons: probabilities[0] ?? 0,
-				Healthy: probabilities[1] ?? 0,
-			},
-		};
-	}
+  const sigmoidValue = output[0] ?? 0.5;
+  const healthyScore = sigmoidValue;
+  const parkinsonsScore = 1 - sigmoidValue;
+  const label: HandwritingClass = parkinsonsScore > healthyScore ? 'Parkinsons' : 'Healthy';
+  const confidence = Math.max(parkinsonsScore, healthyScore);
 
-	const parkinsonsScore = probabilities[0];
-	const healthyScore = probabilities[1];
-	const label: HandwritingClass = parkinsonsScore >= healthyScore ? 'Parkinsons' : 'Healthy';
-	const confidence = Math.max(parkinsonsScore, healthyScore);
-
-	return {
-		label,
-		confidence,
-		probabilities: {
-			Parkinsons: parkinsonsScore,
-			Healthy: healthyScore,
-		},
-	};
+  return {
+    label,
+    confidence,
+    probabilities: {
+      Parkinsons: parkinsonsScore,
+      Healthy: healthyScore,
+    },
+  };
 }
 
-async function toImageTensor(
-	source: HTMLImageElement | HTMLCanvasElement | ImageData | ImageBitmap,
-	inputSize: number,
-) {
-	const tf = await loadTensorflow();
-	const tensor = tf.tidy(() => {
-		const pixels = tf.browser.fromPixels(source);
-		const resized = tf.image.resizeBilinear(pixels, [inputSize, inputSize], true);
-		const floatImg = resized.toFloat().div(tf.scalar(255));
-		return floatImg.expandDims(0);
-	});
-	return tensor;
+function preprocessImage(
+  tf: typeof import('@tensorflow/tfjs'),
+  img: HTMLImageElement
+): import('@tensorflow/tfjs').Tensor3D {
+  console.log('[preprocess] Input image:', img.width, 'x', img.height);
+  
+  let tensor = tf.browser.fromPixels(img);
+  console.log('[preprocess] Tensor shape:', tensor.shape);
+  
+  // Resize to 224x224
+  tensor = tf.image.resizeBilinear(tensor, [224, 224]);
+  console.log('[preprocess] Resized:', tensor.shape);
+  
+  // Normalize to [-1, 1] for MobileNetV2
+  tensor = tensor.div(127.5).sub(1.0);
+  console.log('[preprocess] Normalized to [-1, 1]');
+  
+  return tensor as import('@tensorflow/tfjs').Tensor3D;
+}
+
+// Simple heuristic-based prediction for now
+function analyzeSpiral(features: number[]): {
+  label: HandwritingClass;
+  confidence: number;
+} {
+  // For now, use a simple threshold on feature variance
+  // This is a placeholder until we can properly load the trained model
+  const variance = features.reduce((sum, val) => sum + Math.abs(val), 0) / features.length;
+  
+  // Higher variance in MobileNet features tends to indicate more tremor/irregularity
+  const parkinsonsScore = Math.min(Math.max((variance - 0.3) / 0.4, 0), 1);
+  const healthyScore = 1 - parkinsonsScore;
+  
+  return {
+    label: parkinsonsScore > healthyScore ? 'Parkinsons' : 'Healthy',
+    confidence: Math.max(parkinsonsScore, healthyScore),
+  };
 }
 
 export async function predictHandwriting(
-	imageElement: HTMLImageElement | HTMLCanvasElement | ImageData | ImageBitmap,
-	type: HandwritingType,
-): Promise<HandwritingPrediction> {
-	const tf = await loadTensorflow();
-	const model = await loadModel(type);
-	const { inputSize, description } = MODEL_CONFIG[type];
-
-	const inputTensor = await toImageTensor(imageElement, inputSize);
-	try {
-		const prediction = model.predict(inputTensor) as import('@tensorflow/tfjs').Tensor;
-		const data = (await prediction.data()) as Float32Array;
-		const { label, confidence, probabilities } = normaliseLabel(data);
-
-			const summary = label === 'Parkinsons'
-				? 'Pattern indicates features associated with Parkinson’s handwriting. Share these findings with a clinician for correlation with clinical tests.'
-				: 'Pattern appears within the healthy reference range. Continue routine monitoring and consult your neurologist for comprehensive assessment.';
-
-		return {
-			label,
-			confidence,
-			probabilities,
-			modelUsed: type,
-			summary: `${description}. ${summary}`,
-		};
-	} finally {
-		tf.dispose(inputTensor);
-	}
+  img: HTMLImageElement,
+  type?: HandwritingType | null
+): Promise<{
+  label: HandwritingClass;
+  confidence: number;
+  probabilities: Record<HandwritingClass, number>;
+  modelInfo: {
+    name: string;
+    inputShape: number[];
+  };
+}> {
+  console.log(`[PREDICT] Starting prediction for: ${type || 'auto-detect'}`);
+  
+  try {
+    // Convert image to blob
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Could not get canvas context');
+    
+    ctx.drawImage(img, 0, 0);
+    const blob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((b) => {
+        if (b) resolve(b);
+        else reject(new Error('Could not convert canvas to blob'));
+      }, 'image/png');
+    });
+    
+    console.log('[PREDICT] Sending to backend API...');
+    
+    // Send to backend with image type (if specified)
+    const formData = new FormData();
+    formData.append('image', blob, `${type || 'unknown'}.png`);
+    if (type) {
+      formData.append('type', type);  // Send type if known, otherwise backend auto-detects
+      console.log(`[PREDICT] Using model type: ${type}`);
+    } else {
+      console.log('[PREDICT] Type not specified - backend will auto-detect');
+    }
+    
+    const response = await fetch('http://localhost:5000/predict', {
+      method: 'POST',
+      body: formData,
+    });
+    
+    const result = await response.json();
+    
+    if (!response.ok) {
+      // Handle validation errors specially
+      if (result.validation_failed) {
+        throw new Error(result.error || 'Image validation failed');
+      }
+      throw new Error(result.error || `Backend API error: ${response.statusText}`);
+    }
+    
+    console.log('[PREDICT] Backend result:', result);
+    
+    return {
+      label: result.label,
+      confidence: result.confidence,
+      probabilities: result.probabilities,
+      modelInfo: result.modelInfo,
+    };
+  } catch (error: any) {
+    console.error('[PREDICT] Error:', error);
+    // Preserve the original error message for validation errors
+    throw new Error(error.message || 'Prediction failed');
+  }
 }
 
-export async function warmupHandwritingModel(type: HandwritingType) {
-	const tf = await loadTensorflow();
-	const model = await loadModel(type);
-	const { inputSize } = MODEL_CONFIG[type];
-	tf.tidy(() => {
-		const zeros = tf.zeros([1, inputSize, inputSize, 3]);
-		model.predict(zeros);
-	});
+export function isHandwritingModelLoaded(type: HandwritingType): boolean {
+  return mobilenetModel !== null;
 }
 
-export function getModelMetadata(type: HandwritingType) {
-	return MODEL_CONFIG[type];
-}
-
-export function resetHandwritingModels() {
-	if (!tfModule) return;
-	Object.keys(modelCache).forEach((key) => {
-		delete modelCache[key as HandwritingType];
-	});
+export async function preloadHandwritingModel(type: HandwritingType = 'spiral'): Promise<void> {
+  console.log(`[preload] Preloading ${type} model...`);
+  await loadMobileNet();
+  console.log(`[preload] ${type} model ready`);
 }

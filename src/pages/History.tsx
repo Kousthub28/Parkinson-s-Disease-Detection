@@ -8,10 +8,10 @@ import { downloadTestReport, downloadTestHistoryCSV } from '../utils/reportUtils
 
 const getRiskColor = (result: any) => {
     const risk = result?.riskLevel || 'Pending';
-    if (risk === 'Low') return 'text-green-400';
-    if (risk === 'Medium') return 'text-yellow-400';
-    if (risk === 'High') return 'text-red-400';
-    return 'text-muted-foreground';
+    if (risk === 'Low') return 'text-green-600';
+    if (risk === 'Medium') return 'text-orange-500';
+    if (risk === 'High') return 'text-red-600';
+    return 'text-gray-600';
 }
 
 const History = () => {
@@ -127,12 +127,12 @@ const History = () => {
   return (
     <div>
         <div className="flex items-center justify-between mb-6">
-            <h2 className="text-3xl font-bold">Test History & Reports</h2>
+            <h2 className="text-3xl font-bold text-gray-900">Test History & Reports</h2>
             {tests.length > 0 && (
                 <button
                     onClick={handleDownloadAll}
                     disabled={downloading === 'all'}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 transition"
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors shadow-md hover:shadow-lg"
                 >
                     {downloading === 'all' ? (
                         <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -144,19 +144,19 @@ const History = () => {
             )}
         </div>
         <Card>
-            <div className="divide-y divide-border">
+            <div className="divide-y divide-gray-200">
                 {loading ? (
                     <div className="flex justify-center items-center p-8">
-                        <LoaderCircle className="animate-spin h-8 w-8 text-primary" />
+                        <LoaderCircle className="animate-spin h-8 w-8 text-blue-600" />
                     </div>
                 ) : tests.length > 0 ? (
                     tests.map(item => (
-                        <div key={item.id} className="flex items-center justify-between p-4">
+                        <div key={item.id} className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
                             <div className="flex items-center space-x-4">
-                                <FileText className="h-8 w-8 text-muted-foreground" />
+                                <FileText className="h-8 w-8 text-blue-600" />
                                 <div>
-                                    <p className="font-semibold capitalize">{item.test_type} Analysis</p>
-                                    <p className="text-sm text-muted-foreground">{new Date(item.created_at).toLocaleString()}</p>
+                                    <p className="font-semibold capitalize text-gray-900">{item.test_type} Analysis</p>
+                                    <p className="text-sm text-gray-600">{new Date(item.created_at).toLocaleString()}</p>
                                 </div>
                             </div>
                             <div className="flex items-center space-x-6">
@@ -166,7 +166,7 @@ const History = () => {
                                 <button 
                                     onClick={() => handleDownload(item)}
                                     disabled={!item.result || downloading === item.id}
-                                    className="flex items-center space-x-2 text-muted-foreground hover:text-foreground disabled:opacity-50 transition"
+                                    className="flex items-center space-x-2 text-gray-600 hover:text-blue-600 disabled:opacity-50 transition-colors"
                                 >
                                     {downloading === item.id ? (
                                         <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -179,7 +179,7 @@ const History = () => {
                         </div>
                     ))
                 ) : (
-                    <p className="text-center text-muted-foreground p-8">You haven't performed any tests yet.</p>
+                    <p className="text-center text-gray-600 p-8">You haven't performed any tests yet.</p>
                 )}
             </div>
         </Card>

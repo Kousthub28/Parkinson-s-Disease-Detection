@@ -79,72 +79,72 @@ const Consult = () => {
       {filteredDoctors.length === 0 ? (
         <Card>
           <div className="text-center py-12">
-            <h3 className="text-lg font-semibold">No matches found</h3>
-            <p className="text-sm text-muted-foreground mt-2">Try clearing your search filters or select &quot;All&quot; regions to view the full list of specialists.</p>
+            <h3 className="text-lg font-semibold text-gray-900">No matches found</h3>
+            <p className="text-sm text-gray-600 mt-2">Try clearing your search filters or select &quot;All&quot; regions to view the full list of specialists.</p>
           </div>
         </Card>
       ) : (
         <div className="grid gap-5 lg:grid-cols-2">
           {filteredDoctors.map((doctor) => (
-            <Card key={doctor.id} className="h-full bg-card/80">
+            <Card key={doctor.id} className="h-full hover:shadow-xl transition-shadow">
               <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
                   <div>
                     <div className="flex items-center gap-3">
-                      <h3 className="text-xl font-semibold">{doctor.name}</h3>
-                      <span className="rounded-full bg-primary/15 px-3 py-1 text-xs font-semibold text-primary-foreground">{doctor.yearsExperience}+ yrs</span>
+                      <h3 className="text-xl font-semibold text-gray-900">{doctor.name}</h3>
+                      <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">{doctor.yearsExperience}+ yrs</span>
                     </div>
-                    <p className="text-sm text-muted-foreground">{doctor.title}</p>
-                    <p className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
-                      <MapPin className="h-4 w-4" /> {doctor.hospital}, {doctor.location}
+                    <p className="text-sm text-gray-600">{doctor.title}</p>
+                    <p className="text-sm text-gray-600 flex items-center gap-2 mt-1">
+                      <MapPin className="h-4 w-4 text-blue-600" /> {doctor.hospital}, {doctor.location}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {doctor.tags.map((tag) => (
-                      <span key={tag} className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">{tag}</span>
+                      <span key={tag} className="rounded-full border border-gray-300 px-3 py-1 text-xs text-gray-600 hover:border-blue-400 hover:text-blue-600 transition-colors">{tag}</span>
                     ))}
                   </div>
                 </div>
 
-                <p className="text-sm leading-relaxed text-muted-foreground">{doctor.bio}</p>
+                <p className="text-sm leading-relaxed text-gray-700">{doctor.bio}</p>
 
                 <div className="grid gap-3 md:grid-cols-2">
-                  <div className="rounded-lg border border-border/80 bg-muted/40 px-3 py-3">
-                    <p className="text-xs font-semibold uppercase text-muted-foreground mb-1">Expertise focus</p>
-                    <ul className="space-y-1 text-sm">
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3">
+                    <p className="text-xs font-semibold uppercase text-gray-600 mb-1">Expertise focus</p>
+                    <ul className="space-y-1 text-sm text-gray-700">
                       {doctor.specialties.map((specialty) => (
-                        <li key={specialty} className="flex items-start gap-2"><span className="mt-1 h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />{specialty}</li>
+                        <li key={specialty} className="flex items-start gap-2"><span className="mt-1 h-1.5 w-1.5 rounded-full bg-blue-600" aria-hidden />{specialty}</li>
                       ))}
                     </ul>
                   </div>
-                  <div className="rounded-lg border border-border/80 bg-muted/40 px-3 py-3 space-y-2">
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Languages className="h-4 w-4" /> {doctor.languages.join(', ')}
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 space-y-2">
+                    <div className="flex items-center gap-2 text-sm text-gray-700">
+                      <Languages className="h-4 w-4 text-blue-600" /> {doctor.languages.join(', ')}
                     </div>
                     <div className="space-y-1 text-sm">
-                      <p className="text-xs font-semibold uppercase text-muted-foreground">Upcoming availability</p>
+                      <p className="text-xs font-semibold uppercase text-gray-600">Upcoming availability</p>
                       {doctor.nextSlots.map((slot) => (
-                        <p key={slot.day} className="flex items-center gap-2 text-sm"><Clock className="h-4 w-4 text-primary-foreground" /> {slot.day}: {slot.times.join(', ')}</p>
+                        <p key={slot.day} className="flex items-center gap-2 text-sm text-gray-700"><Clock className="h-4 w-4 text-blue-600" /> {slot.day}: {slot.times.join(', ')}</p>
                       ))}
                     </div>
                   </div>
                 </div>
 
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                    <Phone className="h-4 w-4" />
-                    <a href={`tel:${doctor.phone}`} className="font-semibold text-primary-foreground hover:underline">{doctor.phone}</a>
+                  <div className="flex items-center gap-3 text-sm text-gray-700">
+                    <Phone className="h-4 w-4 text-blue-600" />
+                    <a href={`tel:${doctor.phone}`} className="font-semibold text-blue-600 hover:text-blue-700 hover:underline">{doctor.phone}</a>
                     {doctor.videoUrl && (
                       <>
-                        <span className="text-muted-foreground">•</span>
-                        <Video className="h-4 w-4" />
-                        <a href={doctor.videoUrl} target="_blank" rel="noreferrer" className="font-semibold text-primary-foreground hover:underline">Request video consult</a>
+                        <span className="text-gray-400">•</span>
+                        <Video className="h-4 w-4 text-blue-600" />
+                        <a href={doctor.videoUrl} target="_blank" rel="noreferrer" className="font-semibold text-blue-600 hover:text-blue-700 hover:underline">Request video consult</a>
                       </>
                     )}
                   </div>
                   <button
                     onClick={() => navigate(`/consult/${doctor.id}/book`)}
-                    className="inline-flex items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition hover:opacity-90"
+                    className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 shadow-md hover:shadow-lg"
                   >
                     Check appointment options
                   </button>
@@ -155,9 +155,9 @@ const Consult = () => {
         </div>
       )}
 
-      <Card className="bg-muted/40 border-dashed">
-        <p className="text-xs text-muted-foreground text-center">
-          The details above are informational and not an endorsement. Always confirm credentials, costs, and emergency protocols with the provider. If you already work with a neurologist you trust, share your Parkinson’s care goals with them for continuity.
+      <Card className="bg-gray-50 border-dashed border-gray-300">
+        <p className="text-xs text-gray-600 text-center">
+          The details above are informational and not an endorsement. Always confirm credentials, costs, and emergency protocols with the provider. If you already work with a neurologist you trust, share your Parkinson's care goals with them for continuity.
         </p>
       </Card>
     </div>
