@@ -1,26 +1,58 @@
+# Dependencies
 node_modules/
-dist/
-.vite/
-coverage/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-.DS_Store
-Thumbs.db
-*.local
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Environment
 .env
 .env.local
-.env.*.local
+.venv
+venv/
+ENV/
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*.log
-*.sqlite
-*.db
+*~
 
-# Large model files (>100MB)
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary files
+*.tmp
+*.temp
+temp_model.h5
+
+# Old files (to be removed)
+backend_api_old.py
+*.zip
+*.pdf
+
+# Large model files (too big for git - use Git LFS if needed)
 *.h5
 *.keras
-public/models/
+*.bin
+*.weights.h5
+
+# Training/test images (too large)
+frontend/public/spiral/training/**
+frontend/public/wave/training/**
+frontend/public/spiral/testing/**
+frontend/public/wave/testing/**
