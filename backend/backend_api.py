@@ -12,8 +12,14 @@ import io
 import os
 import cv2
 import h5py
+from datetime import datetime
 from mongodb_service import mongodb_service
 from functools import wraps
+from therapy_service import therapy_service, TherapySession
+from exercise_definitions import get_exercise_by_id, get_exercises_by_type, ExerciseType, get_default_session_plan
+from exercise_validator import ExerciseValidator
+from pose_detection import PoseDetector
+import base64
 
 app = Flask(__name__)
 CORS(app)
@@ -51,17 +57,7 @@ def require_auth(f):
     return decorated_function
 
 # Model paths (relative to backend directory)
-# Try new .keras model in backend folder first, then root, then fallback to old .h5
-SPIRAL_MODEL_PATH_KERAS_BACKEND = os.path.join(os.path.dirname(__file__), 'parkinsons_spiral_mobilenetv2_final.keras')
-SPIRAL_MODEL_PATH_KERAS_ROOT = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'parkinsons_spiral_mobilenetv2_final.keras')
-SPIRAL_MODEL_PATH_H5 = os.path.join(os.path.dirname(__file__), 'models', 'spiral', 'mobilenet_spiral.h5')
-# Prefer backend folder, then root, then .h5
-if os.path.exists(SPIRAL_MODEL_PATH_KERAS_BACKEND):
-    SPIRAL_MODEL_PATH = SPIRAL_MODEL_PATH_KERAS_BACKEND
-elif os.path.exists(SPIRAL_MODEL_PATH_KERAS_ROOT):
-    SPIRAL_MODEL_PATH = SPIRAL_MODEL_PATH_KERAS_ROOT
-else:
-    SPIRAL_MODEL_PATH = SPIRAL_MODEL_PATH_H5
+SPIRAL_MODEL_PATH_H5 = os.path.join(os.path.dirname(__file__), 'models', 'spiral', 'mobilenet_spiral_robust.h5')
 WAVE_MODEL_PATH = os.path.join(os.path.dirname(__file__), 'models', 'wave', 'inception_wave_v2.h5')
 
 # Global model cache
@@ -246,32 +242,14 @@ def _load_keras3_model(keras_dir):
 def load_spiral_model():
     """Load MobileNetV2 spiral model"""
     if models['spiral'] is None:
-        print("Loading spiral model (MobileNetV2)...")
+        print("Loading spiral model (MobileNetV2 Robust)...")
         try:
-            # Try .keras directory format (Keras 3.0) from backend folder, then root
-            for label, keras_path in [
-                ("backend folder", SPIRAL_MODEL_PATH_KERAS_BACKEND),
-                ("root folder", SPIRAL_MODEL_PATH_KERAS_ROOT),
-            ]:
-                config_file = os.path.join(keras_path, 'config.json')
-                weights_file = os.path.join(keras_path, 'model.weights.h5')
-                if os.path.exists(config_file) and os.path.exists(weights_file):
-                    print(f"  Loading .keras from {label}: {keras_path}")
-                    try:
-                        models['spiral'] = _load_keras3_model(keras_path)
-                        print(f"  ✓ Spiral model loaded: {models['spiral'].input_shape}")
-                        return models['spiral']
-                    except Exception as e:
-                        print(f"  [WARNING] Keras 3 rebuild failed: {e}")
-                        continue
-
-            # Fallback: try loading .h5 format
             if os.path.exists(SPIRAL_MODEL_PATH_H5):
                 print(f"  Loading from .h5 format: {SPIRAL_MODEL_PATH_H5}")
                 models['spiral'] = tf.keras.models.load_model(SPIRAL_MODEL_PATH_H5, compile=False)
                 print(f"  ✓ Spiral model loaded: {models['spiral'].input_shape}")
             else:
-                print(f"  ✗ No spiral model found at any path")
+                print(f"  ✗ No spiral model found at {SPIRAL_MODEL_PATH_H5}")
                 return None
         except Exception as e:
             print(f"  ✗ Error loading spiral model: {e}")
@@ -290,29 +268,117 @@ def load_wave_model():
             return None
     return models['wave']
 
+def __composite_with_white_bg(img):
+    print("  [Pre-processing] Checking for transparency and composing with white background...")
+    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+        alpha = img.convert('RGBA').split()[-1]
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(img, mask=alpha)
+        return bg
+    if img.mode != 'RGB':
+        return img.convert('RGB')
+    return img
+
+def enhance_image_quality(img):
+    """
+    Enhance drawing image quality visually (for metrics/reporting only, NOT for model inference).
+    This should NOT be used as input to the AI neural networks since grayscale conversion
+    and brightness manipulation change the pixel distribution and break the inversion check.
+    """
+    # 1. Resize to expected dimension
+    print("  [Pre-processing] Resizing image to 224x224...")
+    img = img.resize((224, 224))
+    img_array = np.array(img, dtype=np.uint8)
+    
+    if len(img_array.shape) == 3:
+        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = img_array
+        
+    # 2. Remove background noise (Non-Local Means Denoising)
+    # Lowered h=5 so we don't accidentally smooth out Parkinsonian micro-tremors!
+    print("  [Pre-processing] Applying gentle OpenCV Fast Non-Local Means Denoising to preserve pen tremors...")
+    denoised = cv2.fastNlMeansDenoising(gray, None, h=5, templateWindowSize=7, searchWindowSize=21)
+    
+    # 3. Brighten background and increase contrast
+    print("  [Pre-processing] Optimizing brightness and contrast (alpha=1.1, beta=15)...")
+    # alpha configures contrast (1.1), beta configures brightness (15)
+    enhanced = cv2.convertScaleAbs(denoised, alpha=1.1, beta=15)
+    
+    # Convert back to 3 channels since models expect RGB
+    final_img = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2RGB)
+    
+    print("  [Pre-processing] Image optimization complete ✅")
+    return final_img
+
 def preprocess_for_spiral(image_bytes):
     """Preprocess image for MobileNetV2 (spiral)"""
     img = Image.open(io.BytesIO(image_bytes))
-    if img.mode != 'RGB':
-        img = img.convert('RGB')
-    img = img.resize((224, 224))
+    img = __composite_with_white_bg(img)
+    print("  [Pre-processing] Resizing image to 224x224 (LANCZOS high quality)...")
+    img = img.resize((224, 224), Image.LANCZOS)  # High-quality downsampling
     img_array = np.array(img, dtype=np.float32)
-    # MobileNetV2 preprocessing: [-1, 1]
+    
+    # The robust spiral model was trained on black backgrounds with white lines.
+    # If the uploaded image has a light/white background, invert it.
+    mean_val = np.mean(img_array)
+    print(f"  [Pre-processing] Image mean pixel value: {mean_val:.1f} — {'inverting (white bg detected)' if mean_val > 127 else 'keeping as-is (dark bg detected)'}")
+    if mean_val > 127:
+        img_array = 255.0 - img_array
+        
+    # MobileNetV2 preprocessing: normalize to [-1, 1]
     img_array = (img_array / 127.5) - 1.0
     img_array = np.expand_dims(img_array, axis=0)
+    print("  [Pre-processing] Spiral pre-processing complete ✅")
     return img_array
 
 def preprocess_for_wave(image_bytes):
     """Preprocess image for InceptionV3 (wave)"""
     img = Image.open(io.BytesIO(image_bytes))
-    if img.mode != 'RGB':
-        img = img.convert('RGB')
-    img = img.resize((224, 224))
+    img = __composite_with_white_bg(img)
+    print("  [Pre-processing] Resizing image to 224x224 (LANCZOS high quality)...")
+    img = img.resize((224, 224), Image.LANCZOS)  # High-quality downsampling
     img_array = np.array(img, dtype=np.float32)
-    # InceptionV3 preprocessing: [0, 1]
+    # InceptionV3 preprocessing: normalize to [0, 1]
     img_array = img_array / 255.0
     img_array = np.expand_dims(img_array, axis=0)
+    print("  [Pre-processing] Wave pre-processing complete ✅")
     return img_array
+
+def extract_drawing_metrics(image_bytes):
+    """Extract physical metrics from the drawing using OpenCV to enrich the clinical reasoning"""
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        img = __composite_with_white_bg(img)
+        img = img.resize((400, 400))
+        img_array = np.array(img, dtype=np.uint8)
+        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+        
+        # Binarize strokes (adaptive for different drawing styles)
+        binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
+        
+        # Density (line thickness/pressure)
+        total_pixels = binary.shape[0] * binary.shape[1]
+        stroke_pixels = cv2.countNonZero(binary)
+        density = (stroke_pixels / total_pixels) * 100
+        
+        # Jitter/Tremor (amount of jagged edges compared to solid area)
+        edges = cv2.Canny(gray, 50, 150)
+        edge_pixels = cv2.countNonZero(edges)
+        jitter = (edge_pixels / stroke_pixels) if stroke_pixels > 0 else 0
+        
+        # Fragmentation (broken lines)
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        significant_contours = [c for c in contours if cv2.contourArea(c) > 20]
+        fragmentation = len(significant_contours)
+        
+        return {
+            'density': density,
+            'jitter': jitter,
+            'fragmentation': fragmentation
+        }
+    except Exception:
+        return None
 
 def validate_drawing_image(image_bytes, expected_type=None):
     """
@@ -321,8 +387,7 @@ def validate_drawing_image(image_bytes, expected_type=None):
     """
     try:
         img = Image.open(io.BytesIO(image_bytes))
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
+        img = __composite_with_white_bg(img)
         img = img.resize((224, 224))
         img_array = np.array(img, dtype=np.uint8)
         
@@ -467,24 +532,68 @@ def predict():
         sigmoid_value = float(prediction[0][0].numpy())
         
         # Interpret sigmoid output
-        # Spiral model has inverted labels: high value = Parkinson's, low value = Healthy
-        # Wave model: high value = Healthy, low value = Parkinson's
+        # Spiral model: HIGH sigmoid = Parkinson's, LOW = Healthy
+        # Wave model:   HIGH sigmoid = Healthy, LOW = Parkinson's
+        print(f"  [Model] Raw sigmoid output: {sigmoid_value:.4f}")
         if image_type == 'spiral':
-            # INVERTED for spiral model
             parkinsons_score = sigmoid_value
             healthy_score = 1 - sigmoid_value
         else:
-            # Normal for wave model
             healthy_score = sigmoid_value
             parkinsons_score = 1 - sigmoid_value
+        print(f"  [Model] Parkinsons score: {parkinsons_score:.4f}, Healthy score: {healthy_score:.4f}")
         
         # Determine label
         label = 'Parkinsons' if parkinsons_score > healthy_score else 'Healthy'
         confidence = max(parkinsons_score, healthy_score)
         
+        # Extract CV metrics for hyper-dynamic reasoning
+        metrics = extract_drawing_metrics(image_bytes)
+        jitter = metrics['jitter'] if metrics else 0.5
+        frag = metrics['fragmentation'] if metrics else 1
+        
+        # Generate reasoning based on prediction confidence AND visual metrics
+        reasoning = ""
+        if image_type == 'spiral':
+            if label == 'Parkinsons':
+                frag_text = f" and {frag} fragmented stroke breaks" if frag > 2 else ""
+                jitter_text = "high-frequency edge jitter" if jitter > 0.8 else "irregular wobble patterns"
+                
+                if confidence > 0.90:
+                    reasoning = f"The model detected severe {jitter_text}{frag_text} across multiple turns. These dense, highly irregular spacings are strong clinical indicators of Parkinsonian micrographics (Confidence: {confidence*100:.1f}%)."
+                elif confidence > 0.70:
+                    reasoning = f"Moderate irregularities were identified, specifically {jitter_text}{frag_text}. This suggests mild, early-stage Parkinson's disease resting tremors affecting fine motor control (Confidence: {confidence*100:.1f}%)."
+                else:
+                    reasoning = f"Slight spatial deviations and sporadic {jitter_text} were observed in the radial tracking, indicating borderline or preliminary signs of Parkinson's (Confidence: {confidence*100:.1f}%)."
+            else:
+                flow_text = "excellent continuous flow" if frag <= 2 else "generally consistent strokes"
+                if confidence > 0.90:
+                    reasoning = f"The spiral exhibits solid radial tracking, {flow_text}, and absolutely no disease-related tremors, strongly indicating healthy fine motor control (Confidence: {confidence*100:.1f}%)."
+                elif confidence > 0.70:
+                    reasoning = f"The drawing maintains good overall smoothness ({flow_text}). While minor natural hesitancies were found, no clinical Parkinsonian tremors were detected (Confidence: {confidence*100:.1f}%)."
+                else:
+                    reasoning = f"The analysis ruled out significant rest tremors, though minor {jitter > 0.8 and 'edge jitters' or 'spatial irregularities'} dropped the confidence slightly. Overall motor control appears healthy (Confidence: {confidence*100:.1f}%)."
+        else:
+            if label == 'Parkinsons':
+                frag_text = f" {frag} distinct freezing artifacts" if frag > 1 else "micrographic patterns"
+                if confidence > 0.90:
+                    reasoning = f"The model detected severe irregular amplitude and{frag_text} in the sine wave. These jagged accelerations strongly indicate Parkinson's disease (Confidence: {confidence*100:.1f}%)."
+                elif confidence > 0.70:
+                    reasoning = f"Moderate amplitude variations were detected along with suspected freezing hesitations, suggesting mild Parkinsonian symptoms in handwriting (Confidence: {confidence*100:.1f}%)."
+                else:
+                    reasoning = f"Slight vertical irregularities were observed in the wave amplitude, indicating early or borderline signs of Parkinson's rather than smooth action tremors (Confidence: {confidence*100:.1f}%)."
+            else:
+                if confidence > 0.90:
+                    reasoning = f"The wave pattern is beautifully preserved with consistent amplitude and minimal edge jitter. This smoothly continuous flow strongly indicates healthy motor control (Confidence: {confidence*100:.1f}%)."
+                elif confidence > 0.70:
+                    reasoning = f"The wave maintains good overall vertical consistency with only natural, non-clinical variations in amplitude (Confidence: {confidence*100:.1f}%)."
+                else:
+                    reasoning = f"While generally consistent in amplitude, some minor hesitations occur; however, no significant disease-related freezing artifacts were evaluated (Confidence: {confidence*100:.1f}%)."
+        
         return jsonify({
             'label': label,
             'confidence': confidence,
+            'reasoning': reasoning,
             'probabilities': {
                 'Parkinsons': parkinsons_score,
                 'Healthy': healthy_score
@@ -515,11 +624,16 @@ def signup():
         email = data.get('email')
         password = data.get('password')
         full_name = data.get('full_name')
+        gender = data.get('gender')
+        date_of_birth = data.get('date_of_birth')
+        weight = data.get('weight')
+        height = data.get('height')
+        clinical_stage = data.get('clinical_stage')
         
         if not email or not password:
             return jsonify({'error': 'Email and password are required'}), 400
         
-        user = mongodb_service.create_user(email, password, full_name)
+        user = mongodb_service.create_user(email, password, full_name, gender, date_of_birth, weight, height, clinical_stage)
         token = mongodb_service.generate_token(user['id'], user['email'])
         
         return jsonify({
@@ -563,6 +677,10 @@ def signin():
 @require_auth
 def signout(user_id):
     """User logout"""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1]
+        mongodb_service.revoke_token(token)
     return jsonify({'message': 'Signed out successfully'})
 
 @app.route('/api/auth/session', methods=['GET', 'OPTIONS'])
@@ -592,11 +710,13 @@ def get_session():
 @require_auth
 def db_get(collection, user_id):
     """Get documents from collection"""
+    print(f"\n[DB API] Received GET request for collection: {collection}, user_id: {user_id}")
     try:
         filter_dict = {}
         if request.args.get('filter'):
             import json
             filter_dict = json.loads(request.args.get('filter'))
+            print(f"  [DB API] filter: {filter_dict}")
         
         order_by = request.args.get('orderBy')
         order_direction = request.args.get('orderDirection', 'asc')
@@ -604,31 +724,44 @@ def db_get(collection, user_id):
         
         if single:
             result = mongodb_service.find_one(collection, filter_dict, user_id)
+            print(f"  [DB API] Returning 1 item")
             return jsonify({'data': result})
         else:
             results = mongodb_service.find_many(
                 collection, filter_dict, user_id, order_by, order_direction
             )
+            print(f"  [DB API] Returning {len(results)} items")
             return jsonify({'data': results})
     except Exception as e:
+        print(f"  [DB API] ERROR in GET: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/db/<collection>', methods=['POST'])
 @require_auth
 def db_insert(collection, user_id):
     """Insert documents into collection"""
+    print(f"\n[DB API] Received insert request for collection: {collection}")
     try:
         data = request.json.get('data', [])
         if isinstance(data, dict):
             data = [data]
+            
+        print(f"  [DB API] Payload size: {len(data)} items")
         
         if len(data) == 1:
             result = mongodb_service.insert_one(collection, data[0], user_id)
+            print(f"  [DB API] Insert successful, ID: {result.get('id')}")
             return jsonify({'data': [result]}), 201
         else:
             results = mongodb_service.insert_many(collection, data, user_id)
+            print(f"  [DB API] Insert many successful, {len(results)} items")
             return jsonify({'data': results}), 201
     except Exception as e:
+        print(f"  [DB API] ERROR during insert: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/db/<collection>', methods=['PATCH'])
@@ -705,6 +838,318 @@ def storage_get(bucket, file_path, user_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# ============================================================================
+# THERAPY API ENDPOINTS
+# ============================================================================
+
+@app.route('/api/therapy/exercises', methods=['GET'])
+@require_auth
+def get_exercises(user_id):
+    """Get all available exercises"""
+    try:
+        exercise_type = request.args.get('type')  # 'warm_up', 'main', 'cool_down'
+        
+        if exercise_type:
+            ex_type = ExerciseType(exercise_type)
+            exercises = get_exercises_by_type(ex_type)
+        else:
+            from exercise_definitions import EXERCISES
+            exercises = list(EXERCISES.values())
+        
+        exercises_data = [
+            {
+                'id': ex.id,
+                'name': ex.name,
+                'description': ex.description,
+                'type': ex.type.value,
+                'duration_seconds': ex.duration_seconds,
+                'target_reps': ex.target_reps,
+                'angle_ranges': ex.angle_ranges,
+                'posture_rules': ex.posture_rules
+            }
+            for ex in exercises
+        ]
+        
+        return jsonify({'data': exercises_data}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/therapy/session/start', methods=['POST'])
+@require_auth
+def start_therapy_session(user_id):
+    """Start a new therapy session"""
+    try:
+        data = request.get_json() or {}
+        exercise_ids = data.get('exercise_ids')  # Optional: custom exercise list
+        
+        session = therapy_service.create_session(user_id, exercise_ids)
+        
+        current_ex = session.get_current_exercise()
+        
+        return jsonify({
+            'data': {
+                'session_id': session.session_id,
+                'current_exercise': {
+                    'id': current_ex.id,
+                    'name': current_ex.name,
+                    'description': current_ex.description,
+                    'target_reps': current_ex.target_reps,
+                    'duration_seconds': current_ex.duration_seconds
+                } if current_ex else None,
+                'total_exercises': len(session.exercises),
+                'start_time': session.start_time.isoformat()
+            }
+        }), 201
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"Error starting therapy session: {error_trace}")
+        return jsonify({'error': str(e), 'traceback': error_trace}), 500
+
+@app.route('/api/therapy/session/<session_id>/analyze', methods=['POST'])
+@require_auth
+def analyze_pose(user_id, session_id):
+    """Analyze pose from video frame and provide feedback"""
+    try:
+        session = therapy_service.get_session(session_id)
+        if not session:
+            print(f"[ANALYZE] Session not found: {session_id}")
+            print(f"[ANALYZE] Active sessions: {list(therapy_service.active_sessions.keys())}")
+            return jsonify({'error': 'Session not found', 'code': 'SESSION_NOT_FOUND'}), 404
+        
+        if session.user_id != user_id:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        data = request.get_json()
+        if not data or 'image' not in data:
+            return jsonify({'error': 'Image data required'}), 400
+        
+        # Decode base64 image
+        image_data = data['image']
+        if image_data.startswith('data:image'):
+            image_data = image_data.split(',')[1]
+        
+        image_bytes = base64.b64decode(image_data)
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if image is None:
+            return jsonify({'error': 'Invalid image data'}), 400
+        
+        # Detect pose
+        result = session.pose_detector.detect_landmarks(image)
+        
+        # Get current exercise info for response
+        current_ex = session.get_current_exercise()
+        current_reps = current_ex.completed_reps if current_ex else 0
+        target_reps = current_ex.target_reps if current_ex else 0
+        
+        if not result:
+            return jsonify({
+                'data': {
+                    'status': 'no_pose',
+                    'message': 'Please position yourself in front of the camera',
+                    'feedback_type': None,
+                    'is_valid': False,
+                    'rep_completed': False,
+                    'current_reps': current_reps,
+                    'target_reps': target_reps,
+                    'progress': session.validator.get_progress()
+                }
+            }), 200
+        
+        landmarks = result['landmarks']
+        
+        # Check visibility
+        if not session.pose_detector.check_visibility(landmarks):
+            return jsonify({
+                'data': {
+                    'status': 'low_visibility',
+                    'message': 'Please move closer to the camera so I can see your shoulders and hips',
+                    'feedback_type': None,
+                    'is_valid': False,
+                    'rep_completed': False,
+                    'current_reps': current_reps,
+                    'target_reps': target_reps,
+                    'progress': session.validator.get_progress()
+                }
+            }), 200
+        
+        # Calculate angles
+        angles = session.pose_detector.get_joint_angles(landmarks)
+        
+        # Get feedback
+        prev_angles = session.validator.last_angles
+        feedback = session.validator.get_feedback(angles, landmarks, prev_angles)
+        session.validator.last_angles = angles.copy()
+        
+        # Log feedback periodically
+        total_feedback = session.feedback_count['correct'] + session.feedback_count['needs_correction']
+        if total_feedback % 10 == 0:  # Log every 10th frame
+            ex_name = current_ex.name if current_ex else 'none'
+            print(f"[ANALYZE] Exercise: {ex_name} | Status: {feedback['status']} | Reps: {current_reps}/{target_reps} | Angles: {dict(list(angles.items())[:3])}")
+        
+        # Update feedback count
+        if feedback['status'] == 'correct' or feedback['status'] == 'rep_completed':
+            session.feedback_count['correct'] += 1
+        elif feedback['status'] == 'needs_correction':
+            session.feedback_count['needs_correction'] += 1
+        
+        # Check if exercise is complete
+        exercise_complete = False
+        if current_ex:
+            # Complete if target reps reached
+            if current_ex.completed_reps >= current_ex.target_reps:
+                exercise_complete = True
+                print(f"[ANALYZE] Exercise '{current_ex.name}' complete! Reps: {current_ex.completed_reps}")
+            # Or time exceeded
+            elif current_ex.start_time:
+                elapsed = (datetime.now() - current_ex.start_time).total_seconds()
+                if elapsed >= current_ex.duration_seconds:
+                    exercise_complete = True
+                    print(f"[ANALYZE] Exercise '{current_ex.name}' time up! Elapsed: {elapsed:.0f}s / {current_ex.duration_seconds}s")
+        
+        # Encode annotated image
+        annotated_image = result['image']
+        _, buffer = cv2.imencode('.jpg', annotated_image)
+        annotated_base64 = base64.b64encode(buffer).decode('utf-8')
+        
+        return jsonify({
+            'data': {
+                **feedback,
+                'exercise_complete': exercise_complete,
+                'annotated_image': f'data:image/jpeg;base64,{annotated_base64}',
+                'angles': angles,
+                'progress': session.validator.get_progress()
+            }
+        }), 200
+    except Exception as e:
+        import traceback
+        print(f"[ANALYZE] Error: {traceback.format_exc()}")
+        return jsonify({'error': str(e), 'traceback': traceback.format_exc()}), 500
+
+@app.route('/api/therapy/session/<session_id>/next', methods=['POST'])
+@require_auth
+def next_exercise(user_id, session_id):
+    """Move to next exercise in session"""
+    try:
+        session = therapy_service.get_session(session_id)
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        if session.user_id != user_id:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        has_next = session.move_to_next_exercise()
+        current_ex = session.get_current_exercise()
+        
+        return jsonify({
+            'data': {
+                'has_next': has_next,
+                'session_complete': not has_next,
+                'current_exercise': {
+                    'id': current_ex.id,
+                    'name': current_ex.name,
+                    'description': current_ex.description,
+                    'target_reps': current_ex.target_reps,
+                    'duration_seconds': current_ex.duration_seconds
+                } if current_ex else None,
+                'exercise_index': session.current_exercise_index,
+                'total_exercises': len(session.exercises)
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/therapy/session/<session_id>/end', methods=['POST'])
+@require_auth
+def end_therapy_session(user_id, session_id):
+    """End therapy session and get summary"""
+    try:
+        session = therapy_service.get_session(session_id)
+        if not session:
+            # Session doesn't exist - return a basic summary instead of error
+            return jsonify({
+                'data': {
+                    'session': None,
+                    'milestones': [],
+                    'summary': {
+                        'total_reps': 0,
+                        'total_duration_minutes': 0,
+                        'accuracy_score': 0,
+                        'exercises_completed': 0
+                    }
+                }
+            }), 200
+        
+        if session.user_id != user_id:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        # Complete session
+        session.complete_session()
+        
+        # Detect milestones
+        milestones = therapy_service.detect_milestones(user_id, session)
+        
+        # Save session data before removing it
+        session_data = session.to_dict()
+        exercises_completed = len([ex for ex in session.exercises if hasattr(ex.status, 'value') and ex.status.value == 'completed'])
+        
+        # End session (removes from active_sessions)
+        therapy_service.end_session(session_id)
+        
+        return jsonify({
+            'data': {
+                'session': session_data,
+                'milestones': milestones,
+                'summary': {
+                    'total_reps': session_data.get('total_reps', 0),
+                    'total_duration_minutes': round(session_data.get('total_duration_seconds', 0) / 60, 1),
+                    'accuracy_score': round(session_data.get('accuracy_score', 0), 1),
+                    'exercises_completed': exercises_completed
+                }
+            }
+        }), 200
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"Error ending therapy session: {error_trace}")
+        return jsonify({'error': str(e), 'traceback': error_trace}), 500
+
+@app.route('/api/therapy/session/<session_id>/progress', methods=['GET'])
+@require_auth
+def get_session_progress(user_id, session_id):
+    """Get current session progress"""
+    try:
+        session = therapy_service.get_session(session_id)
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        if session.user_id != user_id:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        current_ex = session.get_current_exercise()
+        elapsed = (datetime.now() - session.start_time).total_seconds()
+        
+        return jsonify({
+            'data': {
+                'session_id': session.session_id,
+                'status': session.status,
+                'elapsed_seconds': elapsed,
+                'current_exercise': {
+                    'id': current_ex.id,
+                    'name': current_ex.name,
+                    'completed_reps': current_ex.completed_reps,
+                    'target_reps': current_ex.target_reps
+                } if current_ex else None,
+                'exercise_index': session.current_exercise_index,
+                'total_exercises': len(session.exercises),
+                'progress': session.validator.get_progress()
+            }
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     # Pre-load models on startup
     print("\n" + "="*60)
@@ -736,4 +1181,4 @@ if __name__ == '__main__':
     print("    - auto: Automatic detection")
     print("="*60 + "\n")
     
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)

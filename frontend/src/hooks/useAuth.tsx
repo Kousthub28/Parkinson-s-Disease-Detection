@@ -149,12 +149,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const logout = async () => {
     try {
-      // Clear all localStorage data
+      // Session-scoped UI cache only. Do NOT remove local_tests / local_test_results:
+      // they are keyed by patient_id and are the fallback when Mongo is slow; clearing them
+      // made spiral/wave disappear after re-login if the cloud save had timed out.
       localStorage.removeItem('user_profile');
       localStorage.removeItem('dashboard_cache');
-      localStorage.removeItem('local_tests');
-      localStorage.removeItem('local_test_results');
-      
+
       // Sign out from MongoDB
       await mongodb.signOut();
       

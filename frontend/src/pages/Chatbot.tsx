@@ -379,55 +379,55 @@ const Chatbot = () => {
                 </div>
                 <div className="flex-1 space-y-4 overflow-y-auto pr-2">
                     <AnimatePresence>
-                    {messages.map((msg) => (
-                        <motion.div
-                            key={msg.id}
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0 }}
-                            className={`flex flex-col ${msg.from === 'user' ? 'items-end' : 'items-start'}`}
-                        >
-                            <div className={`flex items-start space-x-3 ${msg.from === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
-                                {msg.from === 'bot' ? <Bot className="h-8 w-8 text-blue-600 flex-shrink-0" /> : <User className="h-8 w-8 text-gray-600 flex-shrink-0" />}
-                                <div className={`p-3 rounded-2xl shadow-sm max-w-2xl ${msg.from === 'bot' ? 'bg-gray-50 border border-gray-200 text-gray-900' : 'bg-blue-600 text-white border border-blue-700'}`}>
-                                    <div className="prose prose-sm max-w-none whitespace-pre-wrap leading-relaxed">{msg.text}</div>
+                        {messages.map((msg) => (
+                            <motion.div
+                                key={msg.id}
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0 }}
+                                className={`flex flex-col ${msg.from === 'user' ? 'items-end' : 'items-start'}`}
+                            >
+                                <div className={`flex items-start space-x-3 ${msg.from === 'user' ? 'flex-row-reverse space-x-reverse' : ''}`}>
+                                    {msg.from === 'bot' ? <Bot className="h-8 w-8 text-blue-600 flex-shrink-0" /> : <User className="h-8 w-8 text-gray-600 flex-shrink-0" />}
+                                    <div className={`p-3 rounded-2xl shadow-sm max-w-2xl ${msg.from === 'bot' ? 'bg-gray-50 border border-gray-200 text-gray-900' : 'bg-blue-600 text-white border border-blue-700'}`}>
+                                        <div className="prose prose-sm max-w-none whitespace-pre-wrap leading-relaxed">{msg.text}</div>
+                                    </div>
                                 </div>
-                            </div>
-                            {msg.from === 'bot' && (
-                                <div className="mt-2 flex items-center gap-3 text-xs text-gray-600">
-                                    {speechSupported && (
+                                {msg.from === 'bot' && (
+                                    <div className="mt-2 flex items-center gap-3 text-xs text-gray-600">
+                                        {speechSupported && (
+                                            <button
+                                                onClick={() => toggleSpeakForMessage(msg)}
+                                                className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 hover:border-primary/60"
+                                            >
+                                                {speakingMessageId === msg.id ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                                                {speakingMessageId === msg.id ? 'Stop audio' : 'Play audio'}
+                                            </button>
+                                        )}
                                         <button
-                                            onClick={() => toggleSpeakForMessage(msg)}
+                                            onClick={() => handleCopy(msg)}
                                             className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 hover:border-primary/60"
                                         >
-                                            {speakingMessageId === msg.id ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
-                                            {speakingMessageId === msg.id ? 'Stop audio' : 'Play audio'}
+                                            <Copy className="h-3.5 w-3.5" />
+                                            {copiedMessageId === msg.id ? 'Copied!' : 'Copy'}
                                         </button>
-                                    )}
-                                    <button
-                                        onClick={() => handleCopy(msg)}
-                                        className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 hover:border-primary/60"
-                                    >
-                                        <Copy className="h-3.5 w-3.5" />
-                                        {copiedMessageId === msg.id ? 'Copied!' : 'Copy'}
-                                    </button>
+                                    </div>
+                                )}
+                            </motion.div>
+                        ))}
+                        {loading && (
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="flex items-start space-x-3"
+                            >
+                                <Bot className="h-8 w-8 text-primary-foreground flex-shrink-0" />
+                                <div className="p-3 rounded-2xl max-w-2xl bg-muted flex items-center space-x-2 border border-border/60">
+                                    <LoaderCircle className="animate-spin h-4 w-4" />
+                                    <span>Preparing a tailored answer…</span>
                                 </div>
-                            )}
-                        </motion.div>
-                    ))}
-                    {loading && (
-                         <motion.div
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            className="flex items-start space-x-3"
-                        >
-                            <Bot className="h-8 w-8 text-primary-foreground flex-shrink-0" />
-                            <div className="p-3 rounded-2xl max-w-2xl bg-muted flex items-center space-x-2 border border-border/60">
-                                <LoaderCircle className="animate-spin h-4 w-4" />
-                                <span>Preparing a tailored answer…</span>
-                            </div>
-                        </motion.div>
-                    )}
+                            </motion.div>
+                        )}
                     </AnimatePresence>
                     <div ref={messagesEndRef} />
                 </div>
@@ -439,8 +439,8 @@ const Chatbot = () => {
                 )}
                 <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4">
                     <div className="flex items-center space-x-2">
-                        <input 
-                            type="text" 
+                        <input
+                            type="text"
                             value={input}
                             onChange={(e) => setInput(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSend()}

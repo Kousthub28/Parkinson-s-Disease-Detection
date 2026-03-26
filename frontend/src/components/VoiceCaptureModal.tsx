@@ -1,10 +1,9 @@
-import React from 'react';
 import { useState, useRef, useEffect } from 'react';
 import Card from './Card';
 import { Mic, X, LoaderCircle, AlertCircle, Square, Scan } from 'lucide-react';
 import { mongodb } from '../lib/mongodbClient';
+import { insertTestRecord } from '../services/testPersistence';
 import { useAuth } from '../hooks/useAuth';
-import { processTest } from '../services/api';
 import {
   extractVoiceFeatures,
   predictVoiceSample,
@@ -104,9 +103,7 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
   const [recordingStatus, setRecordingStatus] = useState<'idle' | 'recording' | 'recorded'>('idle');
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
   const [prediction, setPrediction] = useState<VoicePrediction | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
@@ -169,7 +166,6 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
       setPrescription(null);
       setSaveMessage(null);
       setSavedTestId(null);
-      setSuccess(false);
       setError(null);
       setRecordingDuration(0);
 
@@ -263,67 +259,70 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
 
     try {
       let mongodbSuccess = false;
+      let mongoRecordId: string | null = savedTestId;
       if (savedTestId) {
         const { error: updateError } = await mongodb
           .from('tests')
           .update({
+            id: savedTestId,
             result: resultPayload,
             confidence: result.probabilityOfParkinsons,
             model_versions: {
               voiceKnn: `k=${result.k}`,
               dataset: 'pd_speech_features.csv',
             },
-          })
-          .eq('id', savedTestId);
+          });
         if (!updateError) mongodbSuccess = true;
       } else {
-        const { data, error: insertError } = await mongodb
-          .from('tests')
-          .insert({
-            patient_id: user.id,
-            test_type: 'speech',
-            raw_storage_path: null,
-            result: resultPayload,
-            confidence: result.probabilityOfParkinsons,
-            model_versions: {
-              voiceKnn: `k=${result.k}`,
-              dataset: 'pd_speech_features.csv',
-            },
-          })
-          .select('id')
-          .single();
-        if (!insertError && data?.id) {
-          setSavedTestId(data.id);
-          mongodbSuccess = true;
-        }
-      }
-      if (mongodbSuccess) {
-        setSaveMessage('Screening saved to dashboard.');
-      } else {
-        // Fallback: Save to localStorage under `local_tests` to match other components
-        const localKey = 'local_tests';
-        const existing = localStorage.getItem(localKey);
-        let arr: any[] = [];
-        if (existing) {
-          try { arr = JSON.parse(existing); } catch { arr = []; }
-        }
-        const localId = `local-${Date.now()}`;
-        const testRecord = {
-          id: localId,
-          patient_id: user?.id || 'local',
+        const { id, error: insertError } = await insertTestRecord({
+          patient_id: user.id,
           test_type: 'speech',
           raw_storage_path: null,
           status: 'completed',
-          created_at: new Date().toISOString(),
           result: resultPayload,
           confidence: result.probabilityOfParkinsons,
           model_versions: {
             voiceKnn: `k=${result.k}`,
             dataset: 'pd_speech_features.csv',
           },
-        };
-        arr.unshift(testRecord);
-        localStorage.setItem(localKey, JSON.stringify(arr));
+        });
+        if (id) {
+          mongoRecordId = id;
+          setSavedTestId(id);
+          mongodbSuccess = true;
+        } else {
+          console.warn('Speech test Mongo insert failed:', insertError);
+        }
+      }
+
+      // ALWAYS Save to localStorage under `local_tests` for resilience and immediate availability
+      const localKey = 'local_tests';
+      const existing = localStorage.getItem(localKey);
+      let arr: any[] = [];
+      if (existing) {
+        try { arr = JSON.parse(existing); } catch { arr = []; }
+      }
+      const localId = mongodbSuccess && mongoRecordId ? mongoRecordId : `local-${Date.now()}`;
+      const testRecord = {
+        id: localId,
+        patient_id: user?.id || 'local',
+        test_type: 'speech',
+        raw_storage_path: null,
+        status: 'completed',
+        created_at: new Date().toISOString(),
+        result: resultPayload,
+        confidence: result.probabilityOfParkinsons,
+        model_versions: {
+          voiceKnn: `k=${result.k}`,
+          dataset: 'pd_speech_features.csv',
+        },
+      };
+      arr.unshift(testRecord);
+      localStorage.setItem(localKey, JSON.stringify(arr));
+
+      if (mongodbSuccess) {
+        setSaveMessage('Screening saved to dashboard.');
+      } else {
         setSavedTestId(localId);
         setSaveMessage('Screening saved locally (offline mode).');
       }
@@ -447,66 +446,6 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
       console.error('Voice analysis failed:', analysisFailure);
     } finally {
       setAnalyzing(false);
-    }
-  };
-
-  const handleUpload = async () => {
-    if (!audioBlob || !user) return;
-    setProcessing(true);
-    setError(null);
-    setSuccess(false);
-    setSaveMessage(null);
-    try {
-      const fileName = `${user.id}-${Date.now()}.webm`;
-      const filePath = `voice/${user.id}/${fileName}`;
-      const { error: uploadError } = await mongodb.storage.from('test_artifacts').upload(filePath, audioBlob);
-      if (uploadError) throw uploadError;
-      let targetTestId = savedTestId;
-      if (savedTestId) {
-        const { error: updateError } = await mongodb
-          .from('tests')
-          .update({ raw_storage_path: filePath })
-          .eq('id', savedTestId);
-        if (updateError) throw updateError;
-      } else {
-        const { data: newTestData, error: insertError } = await mongodb
-          .from('tests')
-          .insert({
-            patient_id: user.id,
-            test_type: 'speech',
-            raw_storage_path: filePath,
-            result: prediction && featureVector && prescription ? {
-              ...prediction,
-              riskScore: Number((prediction.probabilityOfParkinsons * 10).toFixed(1)),
-              riskLevel: deriveRiskLevel(prediction.probabilityOfParkinsons),
-              features: featureVector,
-              prescription,
-              createdAt: new Date().toISOString(),
-              source: 'voice-screening-local',
-            } : null,
-            confidence: prediction?.probabilityOfParkinsons ?? null,
-            model_versions: prediction ? {
-              voiceKnn: `k=${prediction.k}`,
-              dataset: 'pd_speech_features.csv',
-            } : null,
-          })
-          .select('id')
-          .single();
-        if (insertError) throw insertError;
-        if (newTestData?.id) {
-          targetTestId = newTestData.id;
-          setSavedTestId(newTestData.id);
-        }
-      }
-      if (targetTestId) {
-        await processTest(targetTestId);
-      }
-      setSuccess(true);
-      setSaveMessage('Voice sample uploaded for cloud analysis.');
-    } catch (error: any) {
-      setError(error.message || 'An error occurred during upload.');
-    } finally {
-      setProcessing(false);
     }
   };
   

@@ -4,12 +4,13 @@ import Dashboard from './pages/Dashboard';
 import NewTest from './pages/NewTest';
 import History from './pages/History';
 import Chatbot from './pages/Chatbot';
-import Consult from './pages/Consult';
-import DoctorBooking from './pages/DoctorBooking';
 import Orders from './pages/Orders';
 import Auth from './pages/Auth';
 import Landing from './pages/Landing';
 import Profile from './pages/Profile';
+import Therapy from './pages/Therapy';
+import ComprehensiveScreening from './pages/ComprehensiveScreening';
+import NutritionPlanner from './pages/NutritionPlanner';
 import Layout from './components/Layout';
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { LoaderCircle } from 'lucide-react';
@@ -52,20 +53,24 @@ function App() {
             element={<PrivateRoute><Layout><Chatbot /></Layout></PrivateRoute>} 
           />
            <Route 
-            path="/consult" 
-            element={<PrivateRoute><Layout><Consult /></Layout></PrivateRoute>} 
-          />
-          <Route
-            path="/consult/:doctorId/book"
-            element={<PrivateRoute><Layout><DoctorBooking /></Layout></PrivateRoute>}
-          />
-           <Route 
             path="/orders" 
             element={<PrivateRoute><Layout><Orders /></Layout></PrivateRoute>} 
           />
           <Route 
             path="/profile" 
             element={<PrivateRoute><Layout><Profile /></Layout></PrivateRoute>} 
+          />
+          <Route 
+            path="/therapy" 
+            element={<PrivateRoute><Layout><Therapy /></Layout></PrivateRoute>} 
+          />
+          <Route 
+            path="/comprehensive-screening" 
+            element={<PrivateRoute><Layout><ComprehensiveScreening /></Layout></PrivateRoute>} 
+          />
+          <Route 
+            path="/nutrition-planner" 
+            element={<PrivateRoute><Layout><NutritionPlanner /></Layout></PrivateRoute>} 
           />
         </Routes>
       </Router>

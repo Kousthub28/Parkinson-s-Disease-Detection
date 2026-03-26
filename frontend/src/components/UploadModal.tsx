@@ -1,10 +1,9 @@
 import { useState } from 'react';
-import Card from './Card';
 import { FileUp, X, LoaderCircle, AlertCircle, CheckCircle, Brain } from 'lucide-react';
-import { mongodb } from '../lib/mongodbClient';
 import { useAuth } from '../hooks/useAuth';
 import { predictHandwriting, type HandwritingPrediction } from '../services/handwritingModel';
 import { getModelAccuracy, getModelDisplay } from '../config/modelInfo';
+import { insertTestRecord } from '../services/testPersistence';
 
 const UploadModal = ({ onClose, uploadType }: { onClose: () => void, uploadType: 'spiral' | 'wave' }) => {
   const [file, setFile] = useState<File | null>(null);
@@ -34,11 +33,10 @@ const UploadModal = ({ onClose, uploadType }: { onClose: () => void, uploadType:
     try {
       console.log('Attempting to save prediction to database...');
 
-      // Create test record
-      const testRecord = {
-        id: `local-${Date.now()}`,
+            // Create Mongo insert payload without a custom id; backend generates ObjectId.
+            const testRecord = {
         patient_id: user.id,
-        test_type: predictionResult.modelUsed === 'spiral' ? 'spiral' : 'wave',
+        test_type: uploadType,
         raw_storage_path: 'local-analysis',
         status: 'completed',
         created_at: new Date().toISOString(),
@@ -47,34 +45,37 @@ const UploadModal = ({ onClose, uploadType }: { onClose: () => void, uploadType:
           confidence: predictionResult.confidence,
           probabilities: predictionResult.probabilities,
           summary: predictionResult.summary,
-          modelUsed: predictionResult.modelUsed,
+          modelUsed: uploadType,
           timestamp: new Date().toISOString(),
-          analysisMethod: 'mobilenetv2-h5-trained',
+          analysisMethod: uploadType === 'spiral' ? 'mobilenetv2-h5-trained' : 'inceptionv3-h5-trained',
         },
         model_versions: {
-          [predictionResult.modelUsed]: predictionResult.modelUsed === 'spiral' ? `MobileNetV2-${getModelAccuracy('spiral')}` : 'VGG16',
+          [uploadType]: uploadType === 'spiral' ? `MobileNetV2-${getModelAccuracy('spiral')}` : 'InceptionV3',
         },
         confidence: predictionResult.confidence,
       };
 
-      // Try MongoDB with very short timeout
-      const insertPromise = (mongodb as any).from('tests').insert(testRecord);
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Database timeout')), 3000)
-      );
-
-      try {
-        await Promise.race([insertPromise, timeoutPromise]);
-        console.log('✅ Saved to MongoDB successfully');
-      } catch (dbError) {
-        console.warn('⚠️ MongoDB not available, saving locally:', dbError);
-        
-        // Fallback: Save to localStorage
-        const localTests = JSON.parse(localStorage.getItem('local_tests') || '[]');
-        localTests.unshift(testRecord);
-        localStorage.setItem('local_tests', JSON.stringify(localTests));
-        console.log('✅ Saved to localStorage successfully');
+      let savedMongoId: string | null = null;
+      const { id: mongoId, error: mongoErr } = await insertTestRecord(testRecord as Record<string, unknown>);
+      if (mongoId) {
+        savedMongoId = mongoId;
+        console.log('✅ Saved spiral/wave test to MongoDB');
+      } else {
+        console.warn('⚠️ MongoDB insert failed, keeping local copy only:', mongoErr);
       }
+
+      const localId = savedMongoId || `local-${Date.now()}`;
+      const localRecord = { ...testRecord, id: localId };
+      const localTests = JSON.parse(localStorage.getItem('local_tests') || '[]');
+      localTests.unshift(localRecord);
+      localStorage.setItem('local_tests', JSON.stringify(localTests));
+      console.log('✅ Saved test copy to localStorage (merge backup)');
+
+      // Also write to `local_test_results` so all screens can pick it up.
+      // (Some parts of the app read from `local_test_results`.)
+      const localTestResults = JSON.parse(localStorage.getItem('local_test_results') || '[]');
+      localTestResults.unshift(localRecord);
+      localStorage.setItem('local_test_results', JSON.stringify(localTestResults));
 
       setSuccess(true);
       setSaving(false);
@@ -102,14 +103,12 @@ const UploadModal = ({ onClose, uploadType }: { onClose: () => void, uploadType:
 
     setProcessing(true);
     setError(null);
-    setLoadingMessage('Loading MobileNetV2 model...');
+    setLoadingMessage('Initializing AI engines...');
 
     try {
       // Use the uploadType parameter (spiral or wave)
       const modelType = uploadType;
       console.log(`[UPLOAD] Using ${modelType} model for file: ${file.name}`);
-      
-      setLoadingMessage(`Running ${modelType === 'spiral' ? 'MobileNetV2 (Spiral)' : 'InceptionV3 (Wave)'} inference...`);
       
       // Load image and create HTMLImageElement
       const imageUrl = URL.createObjectURL(file);
@@ -120,6 +119,16 @@ const UploadModal = ({ onClose, uploadType }: { onClose: () => void, uploadType:
         img.onerror = () => reject(new Error('Failed to load image'));
         img.src = imageUrl;
       });
+
+      // Sequential UI feedback to match backend processing steps
+      await new Promise(resolve => setTimeout(resolve, 600));
+      setLoadingMessage('Resizing and optimizing image quality...');
+      
+      await new Promise(resolve => setTimeout(resolve, 800));
+      setLoadingMessage('Extracting spatial features and contours...');
+      
+      await new Promise(resolve => setTimeout(resolve, 600));
+      setLoadingMessage(`Running ${modelType === 'spiral' ? 'MobileNetV2 (Spiral)' : 'InceptionV3 (Wave)'} inference...`);
 
       // Run prediction using trained model
       // If modelType is null, backend will auto-detect
@@ -183,7 +192,16 @@ const UploadModal = ({ onClose, uploadType }: { onClose: () => void, uploadType:
                                 <span className="font-bold text-xl text-blue-600">{(predictionResult.confidence * 100).toFixed(1)}%</span>
                             </div>
                             
-                            <div className="pt-2">
+                            {predictionResult.reasoning && (
+                                <div className="pt-2 pb-1">
+                                    <p className="text-xs font-semibold text-gray-700 mb-1">Clinical Reasoning:</p>
+                                    <p className="text-sm text-gray-800 leading-relaxed bg-white/50 p-2 rounded-lg border border-blue-100">
+                                        {predictionResult.reasoning}
+                                    </p>
+                                </div>
+                            )}
+                            
+                            <div className="pt-2 mt-2 border-t border-blue-200">
                                 <p className="text-xs font-semibold text-gray-700 mb-2">Probabilities:</p>
                                 <div className="space-y-2">
                                     <div className="bg-white rounded-lg p-2 shadow-sm">

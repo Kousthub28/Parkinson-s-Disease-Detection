@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, LoaderCircle, Mail, Lock, User, CheckCircle, Sparkles } from 'lucide-react';
+import { AlertCircle, LoaderCircle, Mail, Lock, User, CheckCircle, Sparkles, Calendar, Activity, Ruler } from 'lucide-react';
 import { mongodb } from '../lib/mongodbClient';
 import { useAuth } from '../hooks/useAuth';
 import { motion } from 'framer-motion';
@@ -11,6 +11,11 @@ const Auth = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [gender, setGender] = useState('');
+  const [dateOfBirth, setDateOfBirth] = useState('');
+  const [weight, setWeight] = useState<number | ''>('');
+  const [height, setHeight] = useState<number | ''>('');
+  const [clinicalStage, setClinicalStage] = useState('');
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -42,7 +47,7 @@ const Auth = () => {
           throw new Error('Sign in failed');
         }
       } else {
-        const { data, error } = await mongodb.signUp(email, password, fullName);
+        const { data, error } = await mongodb.signUp(email, password, fullName, gender, dateOfBirth, weight !== '' ? Number(weight) : undefined, height !== '' ? Number(height) : undefined, clinicalStage || undefined);
         if (error) throw new Error(error);
         if (data?.access_token) {
           setMessage('Signup successful! You can now log in.');
@@ -122,6 +127,94 @@ const Auth = () => {
                     onChange={e => setFullName(e.target.value)} 
                     className="w-full bg-white text-gray-900 pl-10 pr-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition-all"
                   />
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                      <select
+                        required
+                        value={gender}
+                        onChange={e => setGender(e.target.value)}
+                        className="w-full bg-white text-gray-900 pl-10 pr-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition-all appearance-none"
+                      >
+                        <option value="" disabled>Select Gender</option>
+                        <option value="Male">Male</option>
+                        <option value="Female">Female</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Date of Birth</label>
+                    <div className="relative">
+                      <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                      <input 
+                        type="date" 
+                        required 
+                        value={dateOfBirth} 
+                        onChange={e => setDateOfBirth(e.target.value)} 
+                        className="w-full bg-white text-gray-900 pl-10 pr-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 mt-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Weight (kg)</label>
+                    <div className="relative">
+                      <Activity className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                      <input 
+                        type="number" 
+                        placeholder="e.g. 70" 
+                        min="1"
+                        max="300"
+                        step="0.1"
+                        value={weight} 
+                        onChange={e => setWeight(e.target.value === '' ? '' : Number(e.target.value))} 
+                        className="w-full bg-white text-gray-900 pl-10 pr-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Height (cm)</label>
+                    <div className="relative">
+                      <Ruler className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                      <input 
+                        type="number" 
+                        placeholder="e.g. 175" 
+                        min="1"
+                        max="300"
+                        step="0.1"
+                        value={height} 
+                        onChange={e => setHeight(e.target.value === '' ? '' : Number(e.target.value))} 
+                        className="w-full bg-white text-gray-900 pl-10 pr-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition-all"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Clinical Stage (Optional)</label>
+                  <div className="relative">
+                    <Activity className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                    <select
+                      value={clinicalStage}
+                      onChange={e => setClinicalStage(e.target.value)}
+                      className="w-full bg-white text-gray-900 pl-10 pr-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 focus:outline-none transition-all appearance-none"
+                    >
+                      <option value="" disabled>Select Clinical Stage</option>
+                      <option value="Not Diagnosed">Not Diagnosed</option>
+                      <option value="Stage 1">Stage 1</option>
+                      <option value="Stage 2">Stage 2</option>
+                      <option value="Stage 3">Stage 3</option>
+                      <option value="Stage 4">Stage 4</option>
+                      <option value="Stage 5">Stage 5</option>
+                    </select>
+                  </div>
                 </div>
               </motion.div>
             )}

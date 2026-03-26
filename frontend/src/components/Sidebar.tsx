@@ -1,11 +1,13 @@
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, FilePlus, History, Bot, Stethoscope, ShoppingCart, LogOut, Settings } from 'lucide-react';
+import { LayoutDashboard, FilePlus, History, Bot, Stethoscope, ShoppingCart, LogOut, Settings, Activity, Layers } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import Logo from './Logo';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/new-test', label: 'New Test', icon: FilePlus },
+  { href: '/comprehensive-screening', label: 'Fusion Score', icon: Layers },
+  { href: '/therapy', label: 'AI Therapy Coach', icon: Activity },
   { href: '/history', label: 'History & Reports', icon: History },
   { href: '/chatbot', label: 'AI Assistant', icon: Bot },
   { href: '/consult', label: 'Consult Doctor', icon: Stethoscope },

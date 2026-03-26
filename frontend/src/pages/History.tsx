@@ -2,16 +2,17 @@ import { useEffect, useState } from 'react';
 import Card from '../components/Card';
 import { FileText, Download, LoaderCircle, FileDown } from 'lucide-react';
 import { mongodb } from '../lib/mongodbClient';
+import { TEST_QUERY_TIMEOUT_MS } from '../services/testPersistence';
 import { useAuth } from '../hooks/useAuth';
 import { Test } from '../types/database';
 import { downloadTestReport, downloadTestHistoryCSV } from '../utils/reportUtils';
 
 const getRiskColor = (result: any) => {
     const risk = result?.riskLevel || 'Pending';
-    if (risk === 'Low') return 'text-green-600';
-    if (risk === 'Medium') return 'text-orange-500';
-    if (risk === 'High') return 'text-red-600';
-    return 'text-gray-600';
+    if (risk === 'Low') return 'text-primary bg-primary/10';
+    if (risk === 'Medium') return 'text-secondary bg-secondary/10';
+    if (risk === 'High') return 'text-destructive bg-destructive/10';
+    return 'text-muted-foreground bg-muted/50';
 }
 
 const History = () => {
@@ -34,8 +35,8 @@ const History = () => {
           .eq('patient_id', user.id)
           .order('created_at', { ascending: false });
         
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Query timeout')), 3000)
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Query timeout')), TEST_QUERY_TIMEOUT_MS),
         );
 
         let mongodbTests: any[] = [];
@@ -50,9 +51,10 @@ const History = () => {
           console.warn('⚠️ History: MongoDB not available, loading from localStorage');
         }
 
-        // Load local tests
-        const localTests = JSON.parse(localStorage.getItem('local_tests') || '[]')
-          .filter((t: any) => t.patient_id === user.id);
+        const localTests = [
+          ...JSON.parse(localStorage.getItem('local_tests') || '[]'),
+          ...JSON.parse(localStorage.getItem('local_test_results') || '[]'),
+        ].filter((t: any) => t.patient_id === user.id);
         console.log('✅ History: Loaded tests from localStorage:', localTests.length);
 
         // Merge and deduplicate
@@ -73,7 +75,7 @@ const History = () => {
     const handleDownload = async (test: Test) => {
         try {
             setDownloading(test.id);
-            await downloadTestReport(test);
+            await downloadTestReport(test, user?.full_name);
         } catch (error) {
             console.error('Error downloading report:', error);
             alert('Failed to download report. Please try again.');
@@ -125,61 +127,69 @@ const History = () => {
     }, [user]);
 
   return (
-    <div>
-        <div className="flex items-center justify-between mb-6">
-            <h2 className="text-3xl font-bold text-gray-900">Test History & Reports</h2>
+    <div className="space-y-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-2">
+            <h2 className="text-4xl font-serif font-bold text-foreground">Test History & Reports</h2>
             {tests.length > 0 && (
                 <button
                     onClick={handleDownloadAll}
                     disabled={downloading === 'all'}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors shadow-md hover:shadow-lg"
+                    className="flex items-center justify-center gap-2 px-6 py-2.5 rounded-full bg-primary text-primary-foreground font-bold hover:bg-primary/90 disabled:opacity-50 transition-all shadow-soft hover:-translate-y-0.5"
                 >
                     {downloading === 'all' ? (
                         <LoaderCircle className="h-4 w-4 animate-spin" />
                     ) : (
-                        <FileDown className="h-4 w-4" />
+                        <FileDown className="h-5 w-5" />
                     )}
                     <span>Download All as CSV</span>
                 </button>
             )}
         </div>
-        <Card>
-            <div className="divide-y divide-gray-200">
+        <Card className="rounded-organic-2 bg-white/60 border border-border/50 p-6 shadow-sm">
+            <div className="space-y-4">
                 {loading ? (
-                    <div className="flex justify-center items-center p-8">
-                        <LoaderCircle className="animate-spin h-8 w-8 text-blue-600" />
+                    <div className="flex justify-center items-center py-12">
+                        <LoaderCircle className="animate-spin h-10 w-10 text-primary" />
                     </div>
                 ) : tests.length > 0 ? (
                     tests.map(item => (
-                        <div key={item.id} className="flex items-center justify-between p-4 hover:bg-gray-50 transition-colors">
-                            <div className="flex items-center space-x-4">
-                                <FileText className="h-8 w-8 text-blue-600" />
+                        <div key={item.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-5 bg-background/50 rounded-2xl border border-border/40 hover:bg-white/80 hover:shadow-float transition-all duration-300 group">
+                            <div className="flex items-center gap-4 mb-4 sm:mb-0">
+                                <div className="p-3 bg-primary/10 rounded-xl group-hover:bg-primary/20 transition-colors">
+                                    <FileText className="h-7 w-7 text-primary" />
+                                </div>
                                 <div>
-                                    <p className="font-semibold capitalize text-gray-900">{item.test_type} Analysis</p>
-                                    <p className="text-sm text-gray-600">{new Date(item.created_at).toLocaleString()}</p>
+                                    <p className="font-serif font-bold text-lg capitalize text-foreground">{item.test_type} Analysis</p>
+                                    <p className="text-sm font-medium text-muted-foreground mt-0.5">{new Date(item.created_at).toLocaleString()}</p>
                                 </div>
                             </div>
-                            <div className="flex items-center space-x-6">
-                                <span className={`font-bold ${getRiskColor(item.result)}`}>
+                            <div className="flex items-center justify-between sm:justify-end gap-6 w-full sm:w-auto mt-2 sm:mt-0 pt-4 sm:pt-0 border-t sm:border-t-0 border-border/30">
+                                <span className={`font-bold px-4 py-1.5 rounded-full text-sm uppercase tracking-wide ${getRiskColor(item.result)}`}>
                                     {(item.result as any)?.riskLevel || 'Pending Analysis'}
                                 </span>
                                 <button 
                                     onClick={() => handleDownload(item)}
                                     disabled={!item.result || downloading === item.id}
-                                    className="flex items-center space-x-2 text-gray-600 hover:text-blue-600 disabled:opacity-50 transition-colors"
+                                    className="flex items-center gap-2 text-sm font-bold text-secondary hover:text-secondary-foreground hover:bg-secondary px-4 py-2 rounded-full border border-secondary/20 disabled:opacity-50 transition-all active:scale-95"
                                 >
                                     {downloading === item.id ? (
                                         <LoaderCircle className="h-4 w-4 animate-spin" />
                                     ) : (
-                                        <Download size={18} />
+                                        <Download size={16} />
                                     )}
-                                    <span>Report</span>
+                                    <span className="hidden sm:inline">Report</span>
                                 </button>
                             </div>
                         </div>
                     ))
                 ) : (
-                    <p className="text-center text-gray-600 p-8">You haven't performed any tests yet.</p>
+                    <div className="text-center py-16">
+                        <div className="bg-muted/50 w-20 h-20 mx-auto rounded-[2rem] flex items-center justify-center mb-4">
+                            <FileText className="h-8 w-8 text-muted-foreground" />
+                        </div>
+                        <h3 className="font-serif text-2xl font-bold text-foreground">No History Yet</h3>
+                        <p className="text-muted-foreground mt-2 font-medium">You haven't performed any tests or uploaded any data.</p>
+                    </div>
                 )}
             </div>
         </Card>

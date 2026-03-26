@@ -1,0 +1,91 @@
+/* Seated Hand Raise Animation */
+@keyframes armRaise {
+  0% {
+    transform: translateY(0px) scaleY(1);
+  }
+  50% {
+    transform: translateY(-20px) scaleY(1.05);
+  }
+  100% {
+    transform: translateY(0px) scaleY(1);
+  }
+}
+
+.animate-arm-raise {
+  animation: armRaise 2s ease-in-out infinite;
+  transform-origin: 160px 98px;
+}
+
+/* Finger Tapping Animation */
+@keyframes fingerTap {
+  0%, 100% {
+    transform: translateY(0px) scaleY(1);
+  }
+  25% {
+    transform: translateY(8px) scaleY(0.95);
+  }
+  50% {
+    transform: translateY(0px) scaleY(1);
+  }
+  75% {
+    transform: translateY(8px) scaleY(0.95);
+  }
+}
+
+.animate-finger-tap {
+  animation: fingerTap 1.2s ease-in-out infinite;
+  transform-origin: 160px 108px;
+}
+
+/* Arm Stability Animation - subtle pulse */
+@keyframes armStability {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.02);
+  }
+}
+
+.animate-arm-stability {
+  animation: armStability 2.5s ease-in-out infinite;
+  transform-origin: 160px 102px;
+}
+
+/* Seated March Animation */
+@keyframes seatedMarch {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(-8deg);
+  }
+  50% {
+    transform: rotate(0deg);
+  }
+  75% {
+    transform: rotate(8deg);
+  }
+}
+
+.animate-seated-march {
+  animation: seatedMarch 1.6s ease-in-out infinite;
+  transform-origin: 160px 100px;
+}
+
+/* Optional: Breathing effect for the entire figure */
+@keyframes subtle-breathe {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+/* Apply subtle breathing effect to the whole SVG */
+svg {
+  animation: subtle-breathe 3s ease-in-out infinite;
+}

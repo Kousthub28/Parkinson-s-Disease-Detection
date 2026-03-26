@@ -59,12 +59,17 @@ class MongoDBClient {
   }
 
   // Auth methods
-  async signUp(email: string, password: string, fullName?: string): Promise<MongoDBResponse<Session>> {
+  async signUp(email: string, password: string, fullName?: string, gender?: string, dateOfBirth?: string, weight?: number, height?: number, clinicalStage?: string): Promise<MongoDBResponse<Session>> {
     try {
       const response = await axios.post(`${this.baseURL}/api/auth/signup`, {
         email,
         password,
         full_name: fullName,
+        gender,
+        date_of_birth: dateOfBirth,
+        weight,
+        height,
+        clinical_stage: clinicalStage,
       });
       if (response.data.data?.access_token) {
         this.setToken(response.data.data.access_token);

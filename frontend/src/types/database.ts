@@ -161,7 +161,7 @@ export interface Database {
     Views: { [_ in never]: never }
     Functions: { [_ in never]: never }
     Enums: {
-        test_type: 'speech' | 'spiral' | 'wave' | 'video'
+        test_type: 'speech' | 'spiral' | 'wave' | 'video' | 'fusion'
     }
     CompositeTypes: { [_ in never]: never }
   }

@@ -1,4 +1,4 @@
-﻿import type { HandwritingClass, HandwritingType } from '../types/database';
+import type { HandwritingClass, HandwritingType } from '../types/database';
 
 let tensorflowInstance: typeof import('@tensorflow/tfjs') | null = null;
 let mobilenetModel: any = null;
@@ -89,18 +89,23 @@ function analyzeSpiral(features: number[]): {
   };
 }
 
-export async function predictHandwriting(
-  img: HTMLImageElement,
-  type?: HandwritingType | null
-): Promise<{
+export type HandwritingPrediction = {
   label: HandwritingClass;
   confidence: number;
+  reasoning?: string;
   probabilities: Record<HandwritingClass, number>;
   modelInfo: {
     name: string;
     inputShape: number[];
   };
-}> {
+  modelUsed?: string;
+  summary?: string;
+};
+
+export async function predictHandwriting(
+  img: HTMLImageElement,
+  type?: HandwritingType | null
+): Promise<HandwritingPrediction> {
   console.log(`[PREDICT] Starting prediction for: ${type || 'auto-detect'}`);
   
   try {
@@ -151,8 +156,10 @@ export async function predictHandwriting(
     return {
       label: result.label,
       confidence: result.confidence,
+      reasoning: result.reasoning,
       probabilities: result.probabilities,
       modelInfo: result.modelInfo,
+      modelUsed: type || result.modelInfo?.type || 'spiral',
     };
   } catch (error: any) {
     console.error('[PREDICT] Error:', error);

@@ -22,7 +22,7 @@ MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
 DATABASE_NAME = os.getenv('DATABASE_NAME', 'parkinsons_care')
 JWT_SECRET = os.getenv('JWT_SECRET', 'your-secret-key-change-in-production')
 JWT_ALGORITHM = 'HS256'
-JWT_EXPIRATION_HOURS = 24
+JWT_EXPIRATION_MINUTES = 30
 
 class MongoDBService:
     def __init__(self):
@@ -40,6 +40,9 @@ class MongoDBService:
             print(f"   Database: {DATABASE_NAME}")
             print("   Make sure MongoDB is running or check your connection string")
             raise
+            
+        # In-memory token blocklist for revoked tokens (logouts)
+        self.revoked_tokens = set()
     
     def _ensure_indexes(self):
         """Create indexes for better query performance"""
@@ -60,25 +63,25 @@ class MongoDBService:
         self.db.reports.create_index('test_id')
     
     def _to_dict(self, doc):
-        """Convert MongoDB document to dict, handling ObjectId"""
+        """Convert MongoDB document to JSON-friendly dict (nested ObjectId/datetime safe)."""
         if doc is None:
             return None
         if isinstance(doc, ObjectId):
             return str(doc)
+        if isinstance(doc, datetime):
+            return doc.isoformat()
         if isinstance(doc, dict):
-            result = {}
-            for key, value in doc.items():
-                if isinstance(value, ObjectId):
-                    result[key] = str(value)
-                elif isinstance(value, datetime):
-                    result[key] = value.isoformat()
-                else:
-                    result[key] = value
-            return result
+            res = {key: self._to_dict(value) for key, value in doc.items()}
+            # Map MongoDB _id to frontend id
+            if '_id' in res:
+                res['id'] = res['_id']
+            return res
+        if isinstance(doc, list):
+            return [self._to_dict(item) for item in doc]
         return doc
     
     # Authentication methods
-    def create_user(self, email: str, password: str, full_name: str = None):
+    def create_user(self, email: str, password: str, full_name: str = None, gender: str = None, date_of_birth: str = None, weight: float = None, height: float = None, clinical_stage: str = None):
         """Create a new user"""
         try:
             user_doc = {
@@ -90,11 +93,48 @@ class MongoDBService:
             }
             result = self.db.users.insert_one(user_doc)
             
+            # Calculate BMI and Class
+            bmi = None
+            bmi_class = None
+            try:
+                if weight and height and float(height) > 0:
+                    w = float(weight)
+                    h = float(height) / 100.0
+                    bmi = w / (h * h)
+                    if bmi < 18.5:
+                        bmi_class = "Underweight"
+                    elif bmi < 25.0:
+                        bmi_class = "Normal Weight"
+                    elif bmi < 30.0:
+                        bmi_class = "Overweight"
+                    else:
+                        bmi_class = "Obese"
+            except Exception:
+                pass
+
+            # Calculate Age
+            age = None
+            if date_of_birth:
+                try:
+                    dob = datetime.strptime(date_of_birth, "%Y-%m-%d")
+                    today = datetime.utcnow()
+                    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+                except Exception:
+                    pass
+            
             # Create patient profile
             profile_doc = {
                 'id': str(result.inserted_id),
                 'patient_id': str(result.inserted_id),
                 'full_name': full_name,
+                'gender': gender,
+                'date_of_birth': date_of_birth,
+                'age': age,
+                'weightKg': float(weight) if weight else None,
+                'heightCm': float(height) if height else None,
+                'stage': clinical_stage,
+                'bmi': bmi,
+                'bmiClass': bmi_class,
                 'created_at': datetime.utcnow(),
                 'updated_at': datetime.utcnow(),
             }
@@ -125,7 +165,7 @@ class MongoDBService:
     
     def generate_token(self, user_id: str, email: str):
         """Generate JWT token"""
-        expires = datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS)
+        expires = datetime.utcnow() + timedelta(minutes=JWT_EXPIRATION_MINUTES)
         payload = {
             'user_id': user_id,
             'email': email,
@@ -133,9 +173,16 @@ class MongoDBService:
             'iat': datetime.utcnow(),
         }
         return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+        
+    def revoke_token(self, token: str):
+        """Add a token to the blocklist (for logout)"""
+        self.revoked_tokens.add(token)
     
     def verify_token(self, token: str):
         """Verify JWT token and return user data"""
+        if token in self.revoked_tokens:
+            return None
+            
         try:
             payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
             user_id = payload.get('user_id')

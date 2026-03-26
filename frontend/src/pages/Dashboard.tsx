@@ -1,29 +1,96 @@
 import { useEffect, useState } from 'react';
 import Card from '../components/Card';
 import Chart from '../components/Chart';
-import { Activity, FileText, BarChart, LoaderCircle, TrendingUp, PieChart, List, Calendar, Clock, FileDown } from 'lucide-react';
+import { Activity, FileText, BarChart, LoaderCircle, TrendingUp, PieChart, List, HeartPulse, Droplets, ArrowRight } from 'lucide-react';
 import { mongodb } from '../lib/mongodbClient';
+import { TEST_QUERY_TIMEOUT_MS } from '../services/testPersistence';
 import { useAuth } from '../hooks/useAuth';
-import { Test, Appointment } from '../types/database';
+import { Test } from '../types/database';
 import { Link } from 'react-router-dom';
-import { getPrescriptionUrl } from '../utils/reportUtils';
+
+const PROFILE_KEY = 'pd_nutrition_profile';
+const LOGS_KEY = 'pd_nutrition_logs';
+const BMI_HISTORY_KEY = 'pd_bmi_history';
+
+const classifyBmi = (bmi: number) => {
+  if (bmi < 18.5) return 'Underweight';
+  if (bmi < 25) return 'Normal';
+  if (bmi < 30) return 'Overweight';
+  return 'Obese';
+};
+
+const toScore10 = (value: unknown): number | null => {
+  if (typeof value !== 'number' || Number.isNaN(value)) return null;
+  if (value > 1) return Math.max(0, Math.min(10, value));
+  return Math.max(0, Math.min(10, value * 10));
+};
+
+const deriveRiskScore = (test: Test): number | null => {
+  const result: any = test.result || {};
+
+  // Preferred direct values
+  const directRiskScore = toScore10(result?.riskScore);
+  if (directRiskScore !== null) return directRiskScore;
+
+  // Voice payload variants
+  const probability = toScore10(result?.probability);
+  if (probability !== null) return probability;
+
+  const probabilityOfParkinsons = toScore10(result?.probabilityOfParkinsons);
+  if (probabilityOfParkinsons !== null) return probabilityOfParkinsons;
+
+  // Handwriting payload often has probabilities.Parkinsons
+  const probabilityFromMap = toScore10(result?.probabilities?.Parkinsons);
+  if (probabilityFromMap !== null) return probabilityFromMap;
+
+  // Final fallback based on label + confidence
+  if (typeof result?.confidence === 'number') {
+    const confidence01 = Math.max(0, Math.min(1, result.confidence));
+    if (result?.label === 'Parkinsons') return confidence01 * 10;
+    if (result?.label === 'Healthy') return (1 - confidence01) * 10;
+  }
+
+  return null;
+};
+
+const getRiskSeries = (tests: Test[]) => tests
+  .map((t) => {
+    const score = deriveRiskScore(t);
+    if (score === null) return null;
+    return {
+      date: new Date(t.created_at).toLocaleDateString(),
+      score: Number(score.toFixed(1)),
+      createdAt: new Date(t.created_at).getTime(),
+    };
+  })
+  .filter((item): item is { date: string; score: number; createdAt: number } => Boolean(item))
+  .sort((a, b) => a.createdAt - b.createdAt);
+
+const getDistribution = (tests: Test[]) => tests.reduce((acc, test) => {
+  acc[test.test_type] = (acc[test.test_type] || 0) + 1;
+  return acc;
+}, {} as Record<string, number>);
 
 const getRiskScoreChartOption = (tests: Test[]) => {
-  const chartData = tests
-    .filter(t => (t.result as any)?.riskScore)
-    .map(t => ({
-      date: new Date(t.created_at).toLocaleDateString(),
-      score: (t.result as any).riskScore,
-    }))
-    .reverse(); // oldest to newest
+  const chartData = getRiskSeries(tests);
+
+  if (chartData.length < 2) {
+      return null; // Return null to indicate not enough data for a trend line
+  }
 
   return {
     backgroundColor: 'transparent',
-    tooltip: { trigger: 'axis' },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#1f2937',
+      borderWidth: 0,
+      textStyle: { color: '#F9FAFB' },
+    },
     xAxis: {
       type: 'category',
       data: chartData.map(d => d.date),
       axisLine: { lineStyle: { color: '#9CA3AF' } },
+      axisLabel: { color: '#6B7280', fontSize: 11 },
     },
     yAxis: {
       type: 'value',
@@ -31,57 +98,84 @@ const getRiskScoreChartOption = (tests: Test[]) => {
       max: 10,
       axisLine: { lineStyle: { color: '#9CA3AF' } },
       splitLine: { lineStyle: { color: '#E5E7EB' } },
+      axisLabel: { color: '#6B7280', fontSize: 11 },
     },
     series: [{
       name: 'Risk Score',
       type: 'line',
       smooth: true,
       data: chartData.map(d => d.score),
-      itemStyle: { color: '#2563EB' },
+      symbol: 'circle',
+      symbolSize: 8,
+      lineStyle: { width: 3, color: '#5D7052' },
+      itemStyle: { color: '#5D7052' }, // Moss Green
       areaStyle: {
           color: {
               type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-              colorStops: [{ offset: 0, color: 'rgba(37, 99, 235, 0.5)' }, { offset: 1, color: 'rgba(37, 99, 235, 0)' }]
+              colorStops: [{ offset: 0, color: 'rgba(93, 112, 82, 0.4)' }, { offset: 1, color: 'rgba(93, 112, 82, 0)' }]
           }
       }
     }],
-    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    grid: { left: '6%', right: '4%', top: '10%', bottom: '10%', containLabel: true },
   };
 };
 
 const getDistributionChartOption = (tests: Test[]) => {
-    const distribution = tests.reduce((acc, test) => {
-        acc[test.test_type] = (acc[test.test_type] || 0) + 1;
-        return acc;
-    }, {} as Record<string, number>);
+    const distribution = getDistribution(tests);
 
     return {
         backgroundColor: 'transparent',
         tooltip: { trigger: 'item' },
-        legend: {
-            orient: 'vertical',
-            left: 'left',
-            textStyle: { color: '#4B5563' }
-        },
+        legend: { show: false },
         series: [{
             name: 'Test Types',
             type: 'pie',
-            radius: ['40%', '70%'],
-            avoidLabelOverlap: false,
-            label: { show: false },
+            radius: ['55%', '80%'],
+            center: ['50%', '52%'],
+            avoidLabelOverlap: true,
+            label: { show: true, position: 'inner', formatter: '{c}', color: 'white', fontWeight: 'bold' },
             emphasis: {
-                label: { show: true, fontSize: '20', fontWeight: 'bold', color: '#1F2937' }
+                itemStyle: {
+                   shadowBlur: 10,
+                   shadowOffsetX: 0,
+                   shadowColor: 'rgba(0, 0, 0, 0.2)'
+                }
             },
             data: Object.entries(distribution).map(([name, value]) => ({ value, name })),
-            color: ['#2563EB', '#3B82F6', '#60A5FA', '#93C5FD', '#DBEAFE']
-        }]
+            color: ['#5D7052', '#C18C5D', '#A85448', '#4A4A40', '#78786C'] // Earthy palette
+        }],
+        graphic: [
+          {
+            type: 'text',
+            left: 'center',
+            top: '45%',
+            style: {
+              text: String(tests.length),
+              fill: '#1F2937',
+              fontSize: 26,
+              fontWeight: 700,
+              textAlign: 'center',
+            },
+          },
+          {
+            type: 'text',
+            left: 'center',
+            top: '54%',
+            style: {
+              text: 'Total',
+              fill: '#6B7280',
+              fontSize: 12,
+              fontWeight: 600,
+              textAlign: 'center',
+            },
+          },
+        ],
     };
 };
 
 const Dashboard = () => {
   const { user, loading: authLoading } = useAuth();
   const [tests, setTests] = useState<Test[]>([]);
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [stats, setStats] = useState({
@@ -89,8 +183,9 @@ const Dashboard = () => {
     avgRisk: 'N/A',
     lastTestDate: 'N/A',
   });
+  const [timeframe, setTimeframe] = useState<'all' | '30d' | '5'>('all');
 
-  const calculateStats = (testsData: Test[]) => {
+  const calculateStats = (testsData: Test[], tf: 'all' | '30d' | '5' = timeframe) => {
     if (!testsData || testsData.length === 0) {
         setStats({ totalTests: 0, avgRisk: 'N/A', lastTestDate: 'N/A' });
         return;
@@ -103,9 +198,21 @@ const Dashboard = () => {
     const diffDays = Math.floor((now.getTime() - lastTestDate.getTime()) / (1000 * 3600 * 24));
     const lastTestDateStr = diffDays === 0 ? 'Today' : `${diffDays}d ago`;
 
-    const testsWithRisk = testsData.filter(t => (t.result as any)?.riskScore);
+    let filteredTests = testsData;
+    if (tf === '30d') {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      filteredTests = testsData.filter(t => new Date(t.created_at) >= thirtyDaysAgo);
+    } else if (tf === '5') {
+      filteredTests = testsData.slice(0, 5);
+    }
+
+    const testsWithRisk = filteredTests
+      .map((t) => deriveRiskScore(t))
+      .filter((score): score is number => score !== null);
+      
     const avgRisk = testsWithRisk.length > 0 
-        ? (testsWithRisk.reduce((acc, t) => acc + (t.result as any).riskScore, 0) / testsWithRisk.length).toFixed(1)
+        ? (testsWithRisk.reduce((acc, score) => acc + score, 0) / testsWithRisk.length).toFixed(1)
         : 'N/A';
     
     setStats({ totalTests, avgRisk, lastTestDate: lastTestDateStr });
@@ -132,8 +239,8 @@ const Dashboard = () => {
         .eq('patient_id', user.id)
         .order('created_at', { ascending: false });
       
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Query timeout')), 2000)
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Query timeout')), TEST_QUERY_TIMEOUT_MS),
       );
 
       let mongodbTests: any[] = [];
@@ -181,30 +288,6 @@ const Dashboard = () => {
     }
   };
 
-  const fetchAppointments = async () => {
-    if (!user) {
-        return;
-    }
-
-    try {
-      const { data, error } = await mongodb
-        .from('appointments')
-        .select('*')
-        .eq('patient_id', user.id)
-        .order('appointment_date', { ascending: true });
-
-      if (error) {
-        console.error('Error fetching appointments:', error);
-        // Table might not exist yet - that's okay
-      } else {
-        setAppointments(data ?? []);
-      }
-    } catch (error) {
-      console.error('Failed to fetch appointments:', error);
-      // Silently fail if appointments table doesn't exist
-    }
-  };
-
   useEffect(() => {
     console.log('Dashboard useEffect - authLoading:', authLoading, 'user:', user);
     
@@ -246,22 +329,12 @@ const Dashboard = () => {
     // Call fetchTests immediately
     fetchTests();
     
-    // Call fetchAppointments (non-blocking)
-    fetchAppointments().catch(err => {
-      console.log('Appointments feature not available yet:', err);
-    });
-
     // Setup realtime subscriptions
     const channel = mongodb.channel('realtime-dashboard')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'tests', filter: `patient_id=eq.${user.id}`},
         (payload: unknown) => {
           console.log('Realtime change received!', payload);
           fetchTests();
-        })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments', filter: `patient_id=eq.${user.id}`},
-        (payload: unknown) => {
-          console.log('Appointments realtime change!', payload);
-          fetchAppointments();
         })
       .subscribe();
 
@@ -302,7 +375,7 @@ const Dashboard = () => {
         </p>
         <Link
           to="/auth"
-          className="rounded-lg bg-primary px-6 py-2 text-primary-foreground hover:opacity-90"
+          className="rounded-full bg-primary px-8 py-3 font-semibold text-primary-foreground hover:scale-105 shadow-soft transition-all duration-300 active:scale-95"
         >
           Go to Sign In
         </Link>
@@ -310,119 +383,246 @@ const Dashboard = () => {
     );
   }
 
+  const riskSeries = getRiskSeries(tests);
+  const latestRisk = riskSeries.length ? riskSeries[riskSeries.length - 1].score : null;
+  const previousRisk = riskSeries.length > 1 ? riskSeries[riskSeries.length - 2].score : null;
+  const riskDelta = latestRisk !== null && previousRisk !== null
+    ? Number((latestRisk - previousRisk).toFixed(1))
+    : null;
+  const trendDirection = riskDelta === null ? 'Stable' : riskDelta > 0 ? 'Up' : riskDelta < 0 ? 'Down' : 'Stable';
+
+  const distribution = getDistribution(tests);
+  const distributionEntries = Object.entries(distribution)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+  const distributionPalette = ['#5D7052', '#C18C5D', '#A85448', '#4A4A40', '#78786C'];
+
+  const nutritionProfile = (() => {
+    try {
+      return JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}');
+    } catch {
+      return {};
+    }
+  })();
+
+  const nutritionLogs = (() => {
+    try {
+      return JSON.parse(localStorage.getItem(LOGS_KEY) || '[]') as Array<{ score?: number; hydrationLiters?: number }>;
+    } catch {
+      return [];
+    }
+  })();
+
+  const bmiHistory = (() => {
+    try {
+      return JSON.parse(localStorage.getItem(BMI_HISTORY_KEY) || '[]') as Array<{ bmi?: number }>;
+    } catch {
+      return [];
+    }
+  })();
+
+  const latestBmi = typeof bmiHistory?.[0]?.bmi === 'number' ? bmiHistory[0].bmi : null;
+  const latestBmiClass = latestBmi !== null ? classifyBmi(latestBmi) : 'N/A';
+  const latestNutritionScore = typeof nutritionLogs?.[0]?.score === 'number' ? nutritionLogs[0].score : null;
+  const latestHydration = typeof nutritionLogs?.[0]?.hydrationLiters === 'number' ? nutritionLogs[0].hydrationLiters : null;
+  const profileCompleteness = ['age', 'weightKg', 'heightCm', 'dietaryPreference']
+    .filter((key) => Boolean((nutritionProfile as any)[key])).length;
+
   return (
     <div className="space-y-8">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card>
+        <Card className="rounded-organic-1 bg-background/70 dark:bg-accent/35">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-gray-600">Total Tests</p>
-            <BarChart className="h-5 w-5 text-blue-600" />
+            <p className="text-sm font-semibold tracking-wide uppercase text-muted-foreground">Total Tests</p>
+            <div className="p-2 bg-primary/10 rounded-2xl"><BarChart className="h-5 w-5 text-primary" /></div>
           </div>
-          <p className="text-2xl font-bold mt-2 text-gray-900">{stats.totalTests}</p>
+          <p className="text-4xl font-serif font-bold mt-3 text-foreground">{stats.totalTests}</p>
         </Card>
-        <Card>
+        <Card className="rounded-organic-2 bg-background/70 dark:bg-accent/35">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-gray-600">Average Risk</p>
-            <Activity className="h-5 w-5 text-blue-600" />
+            <p className="text-sm font-semibold tracking-wide uppercase text-muted-foreground">Average Risk</p>
+            <div className="flex items-center gap-3">
+              <select 
+                value={timeframe} 
+                onChange={(e) => {
+                  const val = e.target.value as 'all' | '30d' | '5';
+                  setTimeframe(val);
+                  calculateStats(tests, val);
+                }}
+                className="text-[11px] font-semibold tracking-wider text-muted-foreground bg-background/50 border border-border/50 rounded-lg px-2 py-1 outline-none cursor-pointer hover:bg-background transition-colors"
+                title="Timeframe for Average Risk Score"
+              >
+                <option value="all">All Time</option>
+                <option value="30d">Last 30 Days</option>
+                <option value="5">Last 5 Tests</option>
+              </select>
+              <div className="p-2 bg-secondary/10 rounded-2xl"><Activity className="h-5 w-5 text-secondary" /></div>
+            </div>
           </div>
-          <p className="text-2xl font-bold mt-2 text-orange-500">{stats.avgRisk} / 10</p>
+          <p className="text-4xl font-serif font-bold mt-3 text-secondary">{stats.avgRisk} <span className="text-xl text-muted-foreground font-sans">/ 10</span></p>
         </Card>
-        <Card>
+        <Card className="rounded-organic-3 bg-background/70 dark:bg-accent/35">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-gray-600">Last Test</p>
-            <FileText className="h-5 w-5 text-blue-600" />
+            <p className="text-sm font-semibold tracking-wide uppercase text-muted-foreground">Last Test</p>
+            <div className="p-2 bg-accent-foreground/5 rounded-2xl"><FileText className="h-5 w-5 text-accent-foreground" /></div>
           </div>
-          <p className="text-2xl font-bold mt-2 text-gray-900">{stats.lastTestDate}</p>
+          <p className="text-3xl font-serif font-bold mt-3 text-foreground">{stats.lastTestDate}</p>
         </Card>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-        <Card className="lg:col-span-3 h-80">
-            <h3 className="font-semibold mb-4 flex items-center text-gray-900"><TrendingUp size={18} className="mr-2 text-blue-600" /> Risk Score Over Time</h3>
-            {tests.length > 0 ? <Chart option={getRiskScoreChartOption(tests)} /> : <p className="text-center text-gray-600 pt-16">No test results yet.</p>}
+        <Card className="lg:col-span-3 h-[28rem] rounded-organic-4 bg-background/70 dark:bg-accent/35">
+            <div className="flex items-start justify-between gap-4 mb-3">
+              <div>
+                <h3 className="font-serif text-xl font-bold flex items-center text-foreground"><TrendingUp size={20} className="mr-2 text-primary" /> Risk Score Trend</h3>
+                <p className="text-sm text-muted-foreground font-medium mt-1">Recent progression across your completed screening tests.</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Latest Risk</p>
+                <p className="text-2xl font-serif font-bold text-primary">{latestRisk !== null ? `${latestRisk.toFixed(1)}/10` : 'N/A'}</p>
+              </div>
+            </div>
+            {tests.length > 0 && getRiskScoreChartOption(tests) ? (
+                <>
+                  <div className="h-[18rem]">
+                    <Chart option={getRiskScoreChartOption(tests)} />
+                  </div>
+                  <div className="grid grid-cols-3 gap-3 mt-4">
+                    <div className="rounded-2xl bg-background/60 border border-border/40 p-3 text-center">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">Trend</p>
+                      <p className="text-lg font-bold text-foreground">{trendDirection}</p>
+                    </div>
+                    <div className="rounded-2xl bg-background/60 border border-border/40 p-3 text-center">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">Delta</p>
+                      <p className="text-lg font-bold text-foreground">{riskDelta === null ? 'N/A' : `${riskDelta > 0 ? '+' : ''}${riskDelta.toFixed(1)}`}</p>
+                    </div>
+                    <div className="rounded-2xl bg-background/60 border border-border/40 p-3 text-center">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">Data Points</p>
+                      <p className="text-lg font-bold text-foreground">{riskSeries.length}</p>
+                    </div>
+                  </div>
+                </>
+            ) : (
+                <div className="h-full w-full flex flex-col items-center justify-center -mt-8">
+                    <div className="w-16 h-16 bg-muted/50 rounded-[2rem] flex items-center justify-center mb-4">
+                        <TrendingUp size={28} className="text-muted-foreground" />
+                    </div>
+                    <p className="text-foreground font-serif font-bold text-lg">Not Enough Data</p>
+                    <p className="text-muted-foreground text-sm font-medium mt-1">Complete at least 2 tests to visualize your changing risk over time.</p>
+                </div>
+            )}
         </Card>
-        <Card className="lg:col-span-2 h-80">
-            <h3 className="font-semibold mb-4 flex items-center text-gray-900"><PieChart size={18} className="mr-2 text-blue-600" /> Test Type Distribution</h3>
-            {tests.length > 0 ? <Chart option={getDistributionChartOption(tests)} /> : <p className="text-center text-gray-600 pt-16">No tests performed yet.</p>}
+        <Card className="lg:col-span-2 h-[28rem] rounded-organic-1 bg-background/70 dark:bg-accent/35">
+            <div className="mb-3">
+              <h3 className="font-serif text-xl font-bold flex items-center text-foreground"><PieChart size={20} className="mr-2 text-primary" /> Test Type Distribution</h3>
+              <p className="text-sm text-muted-foreground font-medium mt-1">Modality balance across your latest saved screenings.</p>
+            </div>
+            {tests.length > 0 ? (
+                <div className="h-[22rem] grid grid-cols-5 gap-2 items-center">
+                  <div className="col-span-3 h-full">
+                    <Chart option={getDistributionChartOption(tests)} />
+                  </div>
+                  <div className="col-span-2 space-y-2">
+                    {distributionEntries.map(([type, count], index) => {
+                      const pct = Math.round((count / tests.length) * 100);
+                      return (
+                        <div key={type} className="rounded-xl border border-border/40 bg-background/60 p-2">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-bold capitalize text-foreground flex items-center gap-2">
+                              <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: distributionPalette[index % distributionPalette.length] }} />
+                              {type}
+                            </span>
+                            <span className="font-semibold text-muted-foreground">{pct}%</span>
+                          </div>
+                          <p className="text-base font-bold text-foreground mt-0.5">{count}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+            ) : (
+                <div className="h-full w-full flex flex-col items-center justify-center -mt-8">
+                    <div className="w-16 h-16 bg-primary/10 rounded-[2rem] flex items-center justify-center mb-4">
+                        <PieChart size={28} className="text-primary" />
+                    </div>
+                    <p className="text-foreground font-serif font-bold text-lg">No Tests Taken</p>
+                    <p className="text-muted-foreground text-sm font-medium mt-1 text-center px-4">Your analysis modalities will appear here once you take your first test.</p>
+                </div>
+            )}
         </Card>
       </div>
 
-      <Card>
-        <div className="flex justify-between items-center mb-4">
-            <h3 className="font-semibold flex items-center text-gray-900"><List size={18} className="mr-2 text-blue-600" /> Recent Tests</h3>
-            <Link to="/history" className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline">View All</Link>
+      <Card className="rounded-organic-2 bg-background/70 dark:bg-accent/35">
+        <div className="flex justify-between items-center mb-6 border-b border-border/30 pb-4">
+            <h3 className="font-serif text-lg font-bold flex items-center text-foreground"><List size={18} className="mr-2 text-primary" /> Recent Tests</h3>
+            <Link to="/history" className="text-sm font-semibold text-primary/80 hover:text-primary transition-colors">View All</Link>
         </div>
-        <div className="space-y-2">
-          {tests.slice(0, 3).map((item) => (
-            <div key={item.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+        <div className="space-y-3">
+          {tests.slice(0, 3).map((item, index) => {
+            const itemRiskScore = deriveRiskScore(item);
+            return (
+            <div key={`${item.id}-${index}`} className="flex items-center justify-between p-4 bg-background/50 backdrop-blur-sm border border-border/30 rounded-2xl hover:bg-muted/30 transition-all duration-300">
               <div className="flex items-center space-x-4">
-                <span className="font-medium capitalize text-gray-900">{item.test_type} Test</span>
-                <span className="text-sm text-gray-600">{new Date(item.created_at).toLocaleDateString()}</span>
+                <div className="p-2 bg-primary/5 rounded-xl"><FileText className="h-5 w-5 text-primary" /></div>
+                <div>
+                  <div className="font-serif font-bold text-foreground capitalize">{item.test_type} Test</div>
+                  <div className="text-xs text-muted-foreground font-medium">{new Date(item.created_at).toLocaleDateString()}</div>
+                </div>
               </div>
-              <span className="text-sm font-semibold text-blue-600 bg-blue-50 px-3 py-1 rounded-full capitalize">
-                { (item.result as any)?.riskScore ? `Risk: ${(item.result as any).riskScore}/10` : 'Processing...' }
+              <span className="text-xs font-bold text-primary bg-primary/10 px-4 py-1.5 rounded-full uppercase tracking-wide">
+                {itemRiskScore !== null ? `Risk: ${itemRiskScore.toFixed(1)}/10` : 'Processing...'}
               </span>
             </div>
-          ))}
-          {tests.length === 0 && <p className="text-center text-gray-600 py-4">You haven't performed any tests yet.</p>}
+          )})}
+          {tests.length === 0 && <p className="text-center text-muted-foreground py-8">You haven't performed any tests yet.</p>}
         </div>
       </Card>
 
-      {/* Appointments Section - Only show if table exists */}
-      {appointments.length > 0 || (tests.length > 0 && appointments.length === 0) ? (
-      <Card>
-        <div className="flex justify-between items-center mb-4">
-            <h3 className="font-semibold flex items-center text-gray-900"><Calendar size={18} className="mr-2 text-blue-600" /> Upcoming Appointments</h3>
-            <Link to="/consult" className="text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline">Book New</Link>
-        </div>
-        <div className="space-y-3">
-          {appointments
-            .filter(apt => new Date(apt.appointment_date) >= new Date())
-            .slice(0, 3)
-            .map((appointment) => (
-            <div key={appointment.id} className="p-4 bg-gray-50 rounded-lg border border-gray-200 hover:border-blue-300 transition-colors">
-              <div className="flex items-start justify-between mb-2">
-                <div>
-                  <h4 className="font-semibold text-gray-900">{appointment.doctor_name}</h4>
-                  <p className="text-sm text-gray-600">{appointment.doctor_hospital}</p>
-                </div>
-                <span className={`text-xs px-2 py-1 rounded-full capitalize ${
-                  appointment.status === 'scheduled' ? 'bg-blue-100 text-blue-700' :
-                  appointment.status === 'completed' ? 'bg-green-100 text-green-700' :
-                  'bg-red-100 text-red-700'
-                }`}>
-                  {appointment.status}
-                </span>
-              </div>
-              <div className="flex items-center gap-4 text-sm text-gray-600">
-                <span className="flex items-center gap-1">
-                  <Calendar className="h-4 w-4" />
-                  {new Date(appointment.appointment_date).toLocaleDateString()}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Clock className="h-4 w-4" />
-                  {appointment.appointment_time}
-                </span>
-              </div>
-              {appointment.prescription_storage_path && (
-                <a
-                  href={getPrescriptionUrl(appointment.prescription_storage_path)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 mt-2 text-sm text-blue-600 hover:text-blue-700 hover:underline"
-                >
-                  <FileDown className="h-4 w-4" />
-                  View Prescription
-                </a>
-              )}
+      <Card className="rounded-organic-1 bg-background/70 dark:bg-accent/35">
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-5 border-b border-border/30 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-3 rounded-2xl bg-primary/15">
+              <HeartPulse className="h-6 w-6 text-primary" />
             </div>
-          ))}
-          {appointments.filter(apt => new Date(apt.appointment_date) >= new Date()).length === 0 && (
-            <p className="text-center text-gray-600 py-4">No upcoming appointments.</p>
-          )}
+            <div>
+              <h3 className="font-serif text-2xl font-bold text-foreground">Nutrition Summary</h3>
+              <p className="text-sm text-muted-foreground">Quick overview. Open Nutrition Planner for full diet guidance and tracking.</p>
+            </div>
+          </div>
+          <Link
+            to="/nutrition-planner"
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-primary text-primary-foreground font-semibold hover:bg-primary/90 transition-colors"
+          >
+            Open Planner <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="rounded-2xl border border-border/40 bg-background/60 p-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">Latest BMI</p>
+            <p className="text-2xl font-serif font-bold text-foreground mt-1">{latestBmi !== null ? latestBmi.toFixed(1) : 'N/A'}</p>
+            <p className="text-xs text-muted-foreground mt-1">{latestBmiClass}</p>
+          </div>
+
+          <div className="rounded-2xl border border-border/40 bg-background/60 p-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">Nutrition Score</p>
+            <p className="text-2xl font-serif font-bold text-foreground mt-1">{latestNutritionScore !== null ? `${latestNutritionScore}/100` : 'N/A'}</p>
+            <p className="text-xs text-muted-foreground mt-1">Last tracked meal quality</p>
+          </div>
+
+          <div className="rounded-2xl border border-border/40 bg-background/60 p-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold flex items-center gap-1"><Droplets className="h-3.5 w-3.5" /> Hydration</p>
+            <p className="text-2xl font-serif font-bold text-foreground mt-1">{latestHydration !== null ? `${latestHydration}L` : 'N/A'}</p>
+            <p className="text-xs text-muted-foreground mt-1">Daily intake snapshot</p>
+          </div>
+
+          <div className="rounded-2xl border border-border/40 bg-background/60 p-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">Profile Setup</p>
+            <p className="text-2xl font-serif font-bold text-foreground mt-1">{profileCompleteness}/4</p>
+            <p className="text-xs text-muted-foreground mt-1">Complete details in planner</p>
+          </div>
         </div>
       </Card>
-      ) : null}
     </div>
   );
 };
