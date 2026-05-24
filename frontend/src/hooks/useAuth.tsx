@@ -33,8 +33,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         .single();
 
       if (error) {
-        console.warn('Error fetching profile from MongoDB:', error);
-        // Try localStorage fallback
+        // Try localStorage fallback silently
         const localProfile = localStorage.getItem('user_profile');
         if (localProfile) {
           const parsedProfile = JSON.parse(localProfile);
@@ -51,8 +50,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         return data;
       }
     } catch (error) {
-      console.error('Failed to fetch profile:', error);
-      // Try localStorage as last resort
+      // Try localStorage as last resort - silent error handling
       const localProfile = localStorage.getItem('user_profile');
       if (localProfile) {
         const parsedProfile = JSON.parse(localProfile);
@@ -74,42 +72,44 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     // Set a timeout to ensure loading doesn't hang forever
     const timeout = setTimeout(() => {
-      console.log('Auth loading timeout - setting loading to false');
       setLoading(false);
-    }, 2000);
+    }, 3000);
 
-    // Check for existing session immediately
-    mongodb.getSession().then(({ data, error }) => {
-      if (error) {
-        console.error('Error getting session:', error);
-        setUser(null);
-        setSession(null);
-        setProfile(null);
-        clearTimeout(timeout);
-        setLoading(false);
-        return;
-      }
-
-      const currentUser = (data?.user as AppUser | null) ?? null;
-      const sessionData = data ? {
-        user: data.user,
-        access_token: mongodb.getToken() || '',
-      } : null;
-
-      setSession(sessionData as Session | null);
-      setUser(currentUser);
-
-      if (currentUser?.role === 'patient') {
-        fetchProfile(currentUser.id).finally(() => {
+    // Add small delay to allow backend initialization
+    const delay = setTimeout(() => {
+      // Check for existing session
+      mongodb.getSession().then(({ data, error }) => {
+        if (error) {
+          // Silent error - expected when not authenticated or backend not ready
+          setUser(null);
+          setSession(null);
+          setProfile(null);
           clearTimeout(timeout);
           setLoading(false);
-        });
-      } else {
-        setProfile(null);
-        clearTimeout(timeout);
-        setLoading(false);
-      }
-    });
+          return;
+        }
+
+        const currentUser = (data?.user as AppUser | null) ?? null;
+        const sessionData = data ? {
+          user: data.user,
+          access_token: mongodb.getToken() || '',
+        } : null;
+
+        setSession(sessionData as Session | null);
+        setUser(currentUser);
+
+        if (currentUser?.role === 'patient') {
+          fetchProfile(currentUser.id).finally(() => {
+            clearTimeout(timeout);
+            setLoading(false);
+          });
+        } else {
+          setProfile(null);
+          clearTimeout(timeout);
+          setLoading(false);
+        }
+      });
+    }, 500);
 
     // Poll for auth state changes (MongoDB doesn't have real-time subscriptions)
     const pollInterval = setInterval(() => {
@@ -139,6 +139,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     // Cleanup
     return () => {
       clearTimeout(timeout);
+      clearTimeout(delay);
       clearInterval(pollInterval);
     };
   }, []);

@@ -19,9 +19,16 @@ export interface Database {
       patient_profiles: {
         Row: {
           id: string
+          patient_id: string | null
           full_name: string | null
           date_of_birth: string | null
           gender: string | null
+          age: number | null
+          weightKg: number | null
+          heightCm: number | null
+          stage: string | null
+          bmi: number | null
+          bmiClass: string | null
           phone: string | null
           emergency_contact: string | null
           consent_flags: Json | null
@@ -30,17 +37,31 @@ export interface Database {
         }
         Insert: {
           id: string
+          patient_id?: string | null
           full_name?: string | null
           date_of_birth?: string | null
           gender?: string | null
+          age?: number | null
+          weightKg?: number | null
+          heightCm?: number | null
+          stage?: string | null
+          bmi?: number | null
+          bmiClass?: string | null
           phone?: string | null
           emergency_contact?: string | null
           consent_flags?: Json | null
         }
         Update: {
+          patient_id?: string | null
           full_name?: string | null
           date_of_birth?: string | null
           gender?: string | null
+          age?: number | null
+          weightKg?: number | null
+          heightCm?: number | null
+          stage?: string | null
+          bmi?: number | null
+          bmiClass?: string | null
           phone?: string | null
           emergency_contact?: string | null
           consent_flags?: Json | null

@@ -123,6 +123,36 @@ class MongoDBService:
             'created_at': user_doc.get('created_at').isoformat() if isinstance(user_doc.get('created_at'), datetime) else user_doc.get('created_at'),
         }
 
+    def _calculate_bmi_metrics(self, weight: float = None, height: float = None):
+        bmi = None
+        bmi_class = None
+        try:
+            if weight and height and float(height) > 0:
+                w = float(weight)
+                h = float(height) / 100.0
+                bmi = w / (h * h)
+                if bmi < 18.5:
+                    bmi_class = "Underweight"
+                elif bmi < 25.0:
+                    bmi_class = "Normal Weight"
+                elif bmi < 30.0:
+                    bmi_class = "Overweight"
+                else:
+                    bmi_class = "Obese"
+        except Exception:
+            pass
+        return bmi, bmi_class
+
+    def _calculate_age_from_date(self, date_of_birth: str = None):
+        if not date_of_birth:
+            return None
+        try:
+            dob = datetime.strptime(date_of_birth, "%Y-%m-%d")
+            today = datetime.utcnow()
+            return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        except Exception:
+            return None
+
     def _ensure_default_admin_account(self):
         """Seed a hidden default admin account in MongoDB."""
         existing_admin = self.db.users.find_one({'email': DEFAULT_ADMIN_EMAIL})
@@ -175,34 +205,8 @@ class MongoDBService:
         }
             result = self.db.users.insert_one(user_doc)
             
-            # Calculate BMI and Class
-            bmi = None
-            bmi_class = None
-            try:
-                if weight and height and float(height) > 0:
-                    w = float(weight)
-                    h = float(height) / 100.0
-                    bmi = w / (h * h)
-                    if bmi < 18.5:
-                        bmi_class = "Underweight"
-                    elif bmi < 25.0:
-                        bmi_class = "Normal Weight"
-                    elif bmi < 30.0:
-                        bmi_class = "Overweight"
-                    else:
-                        bmi_class = "Obese"
-            except Exception:
-                pass
-
-            # Calculate Age
-            age = None
-            if date_of_birth:
-                try:
-                    dob = datetime.strptime(date_of_birth, "%Y-%m-%d")
-                    today = datetime.utcnow()
-                    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-                except Exception:
-                    pass
+            bmi, bmi_class = self._calculate_bmi_metrics(weight, height)
+            age = self._calculate_age_from_date(date_of_birth)
             
             if role == 'patient':
                 # Create patient profile
@@ -210,6 +214,7 @@ class MongoDBService:
                     'id': str(result.inserted_id),
                     'patient_id': str(result.inserted_id),
                     'full_name': full_name,
+                    'phone': phone,
                     'gender': gender,
                     'date_of_birth': date_of_birth,
                     'age': age,
@@ -233,12 +238,183 @@ class MongoDBService:
         user = self.db.users.find_one({'email': email})
         if not user:
             return None
-        
+
         if not check_password_hash(user['password_hash'], password):
             return None
 
         return self._serialize_user(user)
-    
+
+    def google_signin_user(self, email: str, full_name: str = None, role: str = 'patient'):
+        """Handle Google sign-in: find existing user or create new one"""
+        try:
+            role = (role or 'patient').strip().lower()
+            if role not in ['patient', 'doctor', 'admin']:
+                raise ValueError('Invalid role')
+
+            # Check if user already exists
+            user = self.db.users.find_one({'email': email})
+            if user:
+                serialized = self._serialize_user(user)
+                print(f"[GOOGLE-AUTH-DB] Existing user found: id={serialized.get('id')}, email={email}, role={serialized.get('role')}")
+                print(f"  Profile: full_name={serialized.get('full_name')}, phone={serialized.get('phone')}, gender={serialized.get('gender')}")
+                return serialized
+
+            # Create new user with Google auth
+            print(f"[GOOGLE-AUTH-DB] No existing user for {email} — creating new {role} account")
+            approval_status = 'pending' if role == 'doctor' else 'approved'
+            import secrets
+            # Generate a random password for Google auth users (they won't use it)
+            random_password = secrets.token_urlsafe(32)
+
+            user_doc = {
+                'email': email,
+                'password_hash': generate_password_hash(random_password),
+                'full_name': full_name,
+                'role': role,
+                'approval_status': approval_status,
+                'google_signin': True,  # Mark as Google sign-in user
+                'phone': None,
+                'hospital': None,
+                'specialties': [],
+                'doctor_identifier': None,
+                'age': None,
+                'gender': None,
+                'qualification': None,
+                'years_experience': None,
+                'availability_slots': [],
+                'created_at': datetime.utcnow(),
+                'updated_at': datetime.utcnow(),
+            }
+            result = self.db.users.insert_one(user_doc)
+            print(f"[GOOGLE-AUTH-DB] New user created: id={str(result.inserted_id)}")
+
+            # If patient, create patient profile
+            if role == 'patient':
+                profile_doc = {
+                    'id': str(result.inserted_id),
+                    'patient_id': str(result.inserted_id),
+                    'full_name': full_name,
+                    'phone': None,
+                    'gender': None,
+                    'date_of_birth': None,
+                    'age': None,
+                    'weightKg': None,
+                    'heightCm': None,
+                    'stage': None,
+                    'bmi': None,
+                    'bmiClass': None,
+                    'created_at': datetime.utcnow(),
+                    'updated_at': datetime.utcnow(),
+                }
+                self.db.patient_profiles.insert_one(profile_doc)
+                print(f"[GOOGLE-AUTH-DB] Empty patient profile created for user {str(result.inserted_id)}")
+
+            created_user = self.db.users.find_one({'_id': result.inserted_id})
+            return self._serialize_user(created_user)
+        except DuplicateKeyError:
+            raise ValueError('User with this email already exists')
+
+    def complete_google_profile(self, user_id: str, payload: dict):
+        print(f"[GOOGLE-AUTH-DB] complete_google_profile called for user_id={user_id}")
+        user = self.db.users.find_one({'_id': ObjectId(user_id)})
+        if not user:
+            print(f"[GOOGLE-AUTH-DB] ERROR: User not found")
+            raise ValueError('User not found')
+
+        role = user.get('role', 'patient')
+        full_name = payload.get('full_name')
+        phone = payload.get('phone')
+        print(f"[GOOGLE-AUTH-DB] Role={role}, full_name={full_name}, phone={phone}")
+
+        if not full_name or not phone:
+            print(f"[GOOGLE-AUTH-DB] VALIDATION FAIL: Missing full_name or phone")
+            raise ValueError('Full name and phone are required')
+
+        user_updates = {
+            'full_name': full_name,
+            'phone': phone,
+        }
+
+        if role == 'patient':
+            gender = payload.get('gender')
+            date_of_birth = payload.get('date_of_birth')
+            weight = payload.get('weight')
+            height = payload.get('height')
+            clinical_stage = payload.get('clinical_stage')
+            consent_flags = payload.get('consent_flags')
+
+            print(f"[GOOGLE-AUTH-DB] Patient fields: gender={gender}, dob={date_of_birth}, weight={weight}, height={height}, stage={clinical_stage}")
+
+            if not gender or not date_of_birth or weight is None or height is None:
+                print(f"[GOOGLE-AUTH-DB] VALIDATION FAIL: Patient profile incomplete")
+                raise ValueError('Patient profile is incomplete')
+
+            age = self._calculate_age_from_date(date_of_birth)
+            bmi, bmi_class = self._calculate_bmi_metrics(weight, height)
+            user_updates['gender'] = gender
+
+            profile_updates = {
+                'patient_id': user_id,
+                'full_name': full_name,
+                'phone': phone,
+                'gender': gender,
+                'date_of_birth': date_of_birth,
+                'age': age,
+                'weightKg': float(weight),
+                'heightCm': float(height),
+                'stage': clinical_stage,
+                'bmi': bmi,
+                'bmiClass': bmi_class,
+                'consent_flags': consent_flags,
+                'updated_at': datetime.utcnow(),
+            }
+
+            existing_profile = self.db.patient_profiles.find_one({'patient_id': user_id}) or self.db.patient_profiles.find_one({'_id': ObjectId(user_id)})
+            if existing_profile:
+                print(f"[GOOGLE-AUTH-DB] Updating existing patient profile")
+                self.db.patient_profiles.update_one({'_id': existing_profile['_id']}, {'$set': profile_updates})
+            else:
+                print(f"[GOOGLE-AUTH-DB] Creating new patient profile")
+                self.db.patient_profiles.insert_one({
+                    'patient_id': user_id,
+                    **profile_updates,
+                    'created_at': datetime.utcnow(),
+                })
+        elif role == 'doctor':
+            hospital = payload.get('hospital')
+            specialties = self._normalize_specialties(payload.get('specialties'))
+            doctor_identifier = payload.get('doctor_identifier')
+            age = payload.get('age')
+            gender = payload.get('gender')
+            qualification = payload.get('qualification')
+            years_experience = payload.get('years_experience')
+
+            print(f"[GOOGLE-AUTH-DB] Doctor fields: hospital={hospital}, specialties={specialties}, doctor_id={doctor_identifier}, age={age}, gender={gender}, qual={qualification}, exp={years_experience}")
+
+            if not all([hospital, doctor_identifier, gender, qualification]) or not specialties:
+                print(f"[GOOGLE-AUTH-DB] VALIDATION FAIL: Doctor profile incomplete")
+                raise ValueError('Doctor profile is incomplete')
+            if age is None or years_experience is None:
+                print(f"[GOOGLE-AUTH-DB] VALIDATION FAIL: Doctor age/experience missing")
+                raise ValueError('Doctor age and experience are required')
+
+            user_updates.update({
+                'hospital': hospital,
+                'specialties': specialties,
+                'doctor_identifier': doctor_identifier,
+                'age': int(age),
+                'gender': gender,
+                'qualification': qualification,
+                'years_experience': int(years_experience),
+                'approval_status': 'pending',
+            })
+
+        self.db.users.update_one({'_id': ObjectId(user_id)}, {'$set': {**user_updates, 'updated_at': datetime.utcnow()}})
+        updated_user = self.db.users.find_one({'_id': ObjectId(user_id)})
+        serialized = self._serialize_user(updated_user)
+        print(f"[GOOGLE-AUTH-DB] Profile update complete for user {serialized.get('id')}")
+        return serialized
+
     def generate_token(self, user_id: str, email: str):
         """Generate JWT token"""
         expires = datetime.utcnow() + timedelta(minutes=JWT_EXPIRATION_MINUTES)
@@ -389,6 +565,12 @@ class MongoDBService:
         # Add user filter if user_id provided
         if user_id and 'patient_id' in self._get_collection_schema(collection):
             filter_dict['patient_id'] = user_id
+            
+        if '_id' in filter_dict and isinstance(filter_dict['_id'], str):
+            try:
+                filter_dict['_id'] = ObjectId(filter_dict['_id'])
+            except Exception:
+                pass
         
         doc = self.db[collection].find_one(filter_dict)
         return self._to_dict(doc)
@@ -402,6 +584,12 @@ class MongoDBService:
         # Add user filter if user_id provided
         if user_id and 'patient_id' in self._get_collection_schema(collection):
             filter_dict['patient_id'] = user_id
+            
+        if '_id' in filter_dict and isinstance(filter_dict['_id'], str):
+            try:
+                filter_dict['_id'] = ObjectId(filter_dict['_id'])
+            except Exception:
+                pass
         
         query = self.db[collection].find(filter_dict)
         
@@ -455,6 +643,12 @@ class MongoDBService:
         # Add user filter if user_id provided
         if user_id and 'patient_id' in self._get_collection_schema(collection):
             filter_dict['patient_id'] = user_id
+            
+        if '_id' in filter_dict and isinstance(filter_dict['_id'], str):
+            try:
+                filter_dict['_id'] = ObjectId(filter_dict['_id'])
+            except Exception:
+                pass
         
         updates['updated_at'] = datetime.utcnow()
         result = self.db[collection].update_one(filter_dict, {'$set': updates})
@@ -465,6 +659,12 @@ class MongoDBService:
         # Add user filter if user_id provided
         if user_id and 'patient_id' in self._get_collection_schema(collection):
             filter_dict['patient_id'] = user_id
+            
+        if '_id' in filter_dict and isinstance(filter_dict['_id'], str):
+            try:
+                filter_dict['_id'] = ObjectId(filter_dict['_id'])
+            except Exception:
+                pass
         
         result = self.db[collection].delete_one(filter_dict)
         return result.deleted_count > 0
@@ -513,4 +713,3 @@ class MongoDBService:
 
 # Global instance
 mongodb_service = MongoDBService()
-

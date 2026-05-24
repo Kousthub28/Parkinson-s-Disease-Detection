@@ -3,7 +3,8 @@ import { Activity, Gauge, RefreshCcw, Sparkles, Target, TimerReset, Trophy, X } 
 import Card from './Card';
 import { useAuth } from '../hooks/useAuth';
 
-const DURATION_MS = 10000;
+const PREP_BUFFER_MS = 5000;
+const DRAW_DURATION_MS = 20000;
 const CANVAS_HEIGHT = 320;
 const PATTERN_OPTIONS = [
   {
@@ -348,13 +349,15 @@ export default function MotorGame({ onClose }) {
   const cursorRef = useRef(null);
   const isDrawingRef = useRef(false);
   const isRunningRef = useRef(false);
+  const phaseStartTimeRef = useRef(0);
   const startTimeRef = useRef(0);
   const lastSampleTimeRef = useRef(0);
 
   const [selectedPattern, setSelectedPattern] = useState('wave');
   const [isRunning, setIsRunning] = useState(false);
+  const [isPreparing, setIsPreparing] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
-  const [timeLeftMs, setTimeLeftMs] = useState(DURATION_MS);
+  const [timeLeftMs, setTimeLeftMs] = useState(DRAW_DURATION_MS);
   const [result, setResult] = useState(null);
   const [traceCount, setTraceCount] = useState(0);
   const [saveMessage, setSaveMessage] = useState('');
@@ -363,7 +366,9 @@ export default function MotorGame({ onClose }) {
     () => PATTERN_OPTIONS.find((item) => item.id === selectedPattern) || PATTERN_OPTIONS[0],
     [selectedPattern],
   );
-  const progressPercent = clamp((timeLeftMs / DURATION_MS) * 100, 0, 100);
+  const activeDurationMs = isPreparing ? PREP_BUFFER_MS : DRAW_DURATION_MS;
+  const isSessionActive = hasStarted && !result;
+  const progressPercent = clamp((timeLeftMs / activeDurationMs) * 100, 0, 100);
   const displaySeconds = Math.max(0, Math.ceil(timeLeftMs / 1000));
 
   const drawPolyline = (ctx, points) => {
@@ -520,11 +525,37 @@ export default function MotorGame({ onClose }) {
     isDrawingRef.current = false;
     isRunningRef.current = false;
     setIsRunning(false);
+    setIsPreparing(false);
     setTimeLeftMs(0);
     setTraceCount(tracePointsRef.current.length);
-    setResult(calculateMotorScores(tracePointsRef.current, pathRef.current, DURATION_MS));
+    setResult(calculateMotorScores(tracePointsRef.current, pathRef.current, DRAW_DURATION_MS));
     scheduleDraw();
   }, [clearTimers, scheduleDraw]);
+
+  const startDrawingPhase = useCallback(() => {
+    clearTimers();
+    setIsPreparing(false);
+    setIsRunning(true);
+    isRunningRef.current = true;
+    setTimeLeftMs(DRAW_DURATION_MS);
+    phaseStartTimeRef.current = performance.now();
+    startTimeRef.current = phaseStartTimeRef.current;
+
+    finishTimeoutRef.current = window.setTimeout(() => {
+      finishTest();
+    }, DRAW_DURATION_MS);
+
+    timerIntervalRef.current = window.setInterval(() => {
+      const elapsed = performance.now() - phaseStartTimeRef.current;
+      const remaining = clamp(DRAW_DURATION_MS - elapsed, 0, DRAW_DURATION_MS);
+      setTimeLeftMs(remaining);
+      if (remaining <= 0) {
+        finishTest();
+      }
+    }, 100);
+
+    scheduleDraw();
+  }, [clearTimers, finishTest, scheduleDraw]);
 
   useEffect(() => {
     initializeCanvas();
@@ -551,7 +582,7 @@ export default function MotorGame({ onClose }) {
 
   useEffect(() => {
     scheduleDraw();
-  }, [scheduleDraw, result, timeLeftMs, isRunning]);
+  }, [scheduleDraw, result, timeLeftMs, isPreparing, isRunning]);
 
   useEffect(() => {
     if (isRunningRef.current) return;
@@ -563,8 +594,9 @@ export default function MotorGame({ onClose }) {
     setResult(null);
     setSaveMessage('');
     hasSavedResultRef.current = false;
+    setIsPreparing(false);
     setHasStarted(false);
-    setTimeLeftMs(DURATION_MS);
+    setTimeLeftMs(DRAW_DURATION_MS);
     initializeCanvas();
   }, [initializeCanvas, selectedPattern]);
 
@@ -643,22 +675,21 @@ export default function MotorGame({ onClose }) {
     setResult(null);
     setSaveMessage('');
     setHasStarted(true);
-    setIsRunning(true);
-    isRunningRef.current = true;
-    setTimeLeftMs(DURATION_MS);
-    startTimeRef.current = performance.now();
+    setIsPreparing(true);
+    setIsRunning(false);
+    isRunningRef.current = false;
+    setTimeLeftMs(PREP_BUFFER_MS);
+    phaseStartTimeRef.current = performance.now();
+    startTimeRef.current = 0;
 
     finishTimeoutRef.current = window.setTimeout(() => {
-      finishTest();
-    }, DURATION_MS);
+      startDrawingPhase();
+    }, PREP_BUFFER_MS);
 
     timerIntervalRef.current = window.setInterval(() => {
-      const elapsed = performance.now() - startTimeRef.current;
-      const remaining = clamp(DURATION_MS - elapsed, 0, DURATION_MS);
+      const elapsed = performance.now() - phaseStartTimeRef.current;
+      const remaining = clamp(PREP_BUFFER_MS - elapsed, 0, PREP_BUFFER_MS);
       setTimeLeftMs(remaining);
-      if (remaining <= 0) {
-        finishTest();
-      }
     }, 100);
 
     scheduleDraw();
@@ -666,10 +697,11 @@ export default function MotorGame({ onClose }) {
 
   const handleRetry = () => {
     clearTimers();
+    setIsPreparing(false);
     setHasStarted(false);
     setIsRunning(false);
     isRunningRef.current = false;
-    setTimeLeftMs(DURATION_MS);
+    setTimeLeftMs(DRAW_DURATION_MS);
     setResult(null);
     setSaveMessage('');
     setTraceCount(0);
@@ -792,16 +824,18 @@ export default function MotorGame({ onClose }) {
                         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">Round Control</p>
                         <p className="mt-2 text-2xl font-serif font-bold text-foreground">{displaySeconds}s</p>
                         <p className="mt-2 text-sm text-muted-foreground">
-                          Hold the pointer on the line and keep your motion steady until time ends.
+                          {isPreparing
+                            ? 'Use the 5-second buffer to get to the start point.'
+                            : 'You get 20 seconds to draw once the buffer ends.'}
                         </p>
                       </div>
                       <button
                         type="button"
                         onClick={handleStart}
-                        disabled={isRunning}
+                        disabled={isSessionActive}
                         className="inline-flex items-center justify-center rounded-full bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground shadow-soft transition-all duration-300 hover:scale-[1.02] hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {hasStarted && !result ? 'Test Running...' : 'Start Test'}
+                        {isPreparing ? 'Get Ready...' : isRunning ? 'Test Running...' : 'Start Test'}
                       </button>
                     </div>
                   </div>
@@ -813,7 +847,7 @@ export default function MotorGame({ onClose }) {
                       key={option.id}
                       option={option}
                       isActive={selectedPattern === option.id}
-                      disabled={isRunning}
+                      disabled={isSessionActive}
                       onSelect={handlePatternSelect}
                     />
                   ))}
@@ -829,7 +863,7 @@ export default function MotorGame({ onClose }) {
                       <p className="mt-1 text-sm text-muted-foreground">{patternMeta.description}</p>
                     </div>
                     <div className="text-sm font-semibold text-muted-foreground">
-                      {displaySeconds}s left
+                      {isPreparing ? `Starts in ${displaySeconds}s` : isRunning ? `${displaySeconds}s left` : '20s draw window'}
                     </div>
                   </div>
 
@@ -864,7 +898,7 @@ export default function MotorGame({ onClose }) {
                   <div className="rounded-[1.6rem] border border-border/40 bg-background/65 p-4">
                     <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                       <TimerReset className="h-4 w-4 text-primary" />
-                      Time
+                      {isPreparing ? 'Buffer' : 'Time'}
                     </div>
                     <p className="mt-3 text-3xl font-serif font-bold text-foreground">{displaySeconds}s</p>
                   </div>
@@ -942,7 +976,7 @@ export default function MotorGame({ onClose }) {
                     </div>
                     <h4 className="mt-3 text-2xl font-serif font-bold text-foreground">{patternMeta.label}</h4>
                     <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                      {patternMeta.description} Start when you are ready and keep your line smooth from start to finish.
+                      {patternMeta.description} Each round gives you a 5-second buffer, then 20 seconds to trace as smoothly as you can.
                     </p>
                   </div>
                 )}

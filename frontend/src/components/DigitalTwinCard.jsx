@@ -1,4 +1,5 @@
 import Card from './Card';
+import { useLanguage } from '../context/LanguageContext';
 
 const clampScore = (value) => {
   if (typeof value !== 'number' || Number.isNaN(value)) return null;
@@ -79,7 +80,59 @@ const getOverallStatus = (statuses) => {
   return getStatusConfig(null);
 };
 
-const MetricRow = ({ label, descriptor, value }) => {
+const statusLabelMap = {
+  'Awaiting Data': { en: 'Awaiting Data', kn: 'ಡೇಟಾ ನಿರೀಕ್ಷೆಯಲ್ಲಿ' },
+  Low: { en: 'Low', kn: 'ಕಡಿಮೆ' },
+  Moderate: { en: 'Moderate', kn: 'ಮಧ್ಯಮ' },
+  High: { en: 'High', kn: 'ಹೆಚ್ಚು' },
+};
+
+const twinCopy = {
+  en: {
+    latestSignal: 'Latest Signal',
+    voiceZone: 'Voice Zone',
+    motorZone: 'Motor Zone',
+    digitalTwin: 'Digital Twin',
+    avatarTitle: 'Condition-Led Health Avatar',
+    avatarSubtitle: 'A visual twin of the patient\'s latest screening signals, with highlighted speech and motor regions for fast clinical interpretation.',
+    motorControl: 'Motor Control',
+    voiceStability: 'Voice Stability',
+    awaitingDrawing: 'Awaiting latest drawing test',
+    awaitingVoice: 'Awaiting latest voice sample',
+    voiceMetric: 'Voice Stability',
+    voiceDescriptor: 'Speech consistency and vocal control',
+    drawingMetric: 'Drawing Accuracy',
+    drawingDescriptor: 'Motor precision during drawing tasks',
+    noSignals: 'No active signal cards',
+    awaitingData: 'Awaiting meaningful screening data',
+    noSignalsDescription: 'Voice and drawing cards appear automatically once the latest saved screening results contain non-zero clinical signals.',
+    avatarTooltip: 'Based on latest screening data',
+  },
+  kn: {
+    latestSignal: 'ಇತ್ತೀಚಿನ ಸೂಚನೆ',
+    voiceZone: 'ಧ್ವನಿ ವಲಯ',
+    motorZone: 'ಚಲನ ವಲಯ',
+    digitalTwin: 'ಡಿಜಿಟಲ್ ಟ್ವಿನ್',
+    avatarTitle: 'ಆರೋಗ್ಯ ಸ್ಥಿತಿ ಅವತಾರ',
+    avatarSubtitle: 'ರೋಗಿಯ ಇತ್ತೀಚಿನ ಪರಿಶೀಲನಾ ಸೂಚನೆಗಳನ್ನು ದೃಶ್ಯರೂಪದಲ್ಲಿ ತೋರಿಸಿ, ಧ್ವನಿ ಮತ್ತು ಚಲನ ಭಾಗಗಳನ್ನು ವೇಗವಾಗಿ ಅರ್ಥಮಾಡಿಕೊಳ್ಳಲು ಸಹಾಯ ಮಾಡುತ್ತದೆ.',
+    motorControl: 'ಚಲನ ನಿಯಂತ್ರಣ',
+    voiceStability: 'ಧ್ವನಿ ಸ್ಥಿರತೆ',
+    awaitingDrawing: 'ಇತ್ತೀಚಿನ ಚಿತ್ರಣ ಪರೀಕ್ಷೆಗಾಗಿ ನಿರೀಕ್ಷೆಯಲ್ಲಿ',
+    awaitingVoice: 'ಇತ್ತೀಚಿನ ಧ್ವನಿ ಪರೀಕ್ಷೆಗಾಗಿ ನಿರೀಕ್ಷೆಯಲ್ಲಿ',
+    voiceMetric: 'ಧ್ವನಿ ಸ್ಥಿರತೆ',
+    voiceDescriptor: 'ಮಾತಿನ ಸ್ಥಿರತೆ ಮತ್ತು ಧ್ವನಿ ನಿಯಂತ್ರಣ',
+    drawingMetric: 'ಚಿತ್ರಣ ನಿಖರತೆ',
+    drawingDescriptor: 'ಚಿತ್ರಣ ಪರೀಕ್ಷೆಯಲ್ಲಿನ ಚಲನ ನಿಖರತೆ',
+    noSignals: 'ಸಕ್ರಿಯ ಸೂಚನೆ ಕಾರ್ಡ್‌ಗಳಿಲ್ಲ',
+    awaitingData: 'ಅರ್ಥಪೂರ್ಣ ಪರಿಶೀಲನಾ ಡೇಟಾಕ್ಕಾಗಿ ನಿರೀಕ್ಷೆಯಲ್ಲಿ',
+    noSignalsDescription: 'ಇತ್ತೀಚಿನ ಉಳಿಸಿದ ಫಲಿತಾಂಶಗಳಲ್ಲಿ ಶೂನ್ಯವಲ್ಲದ ಕ್ಲಿನಿಕಲ್ ಸೂಚನೆಗಳಿದ್ದಾಗ ಧ್ವನಿ ಮತ್ತು ಚಿತ್ರಣ ಕಾರ್ಡ್‌ಗಳು ಸ್ವಯಂ ಕಾಣಿಸಿಕೊಳ್ಳುತ್ತವೆ.',
+    avatarTooltip: 'ಇತ್ತೀಚಿನ ಪರಿಶೀಲನಾ ಡೇಟಾ ಆಧಾರಿತ',
+  },
+};
+
+const getStatusLabel = (label, language) => statusLabelMap[label]?.[language] || label;
+
+const MetricRow = ({ label, descriptor, value, language, latestSignalLabel }) => {
   const status = getStatusConfig(value);
 
   if (value === null) {
@@ -94,13 +147,13 @@ const MetricRow = ({ label, descriptor, value }) => {
           <p className="mt-1 text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">{descriptor}</p>
         </div>
         <span className={`inline-flex min-w-[6.5rem] justify-center rounded-full px-3 py-1 text-xs font-semibold ${status.badgeClass}`}>
-          {status.label}
+          {getStatusLabel(status.label, language)}
         </span>
       </div>
 
       <div className="mt-5">
         <div className="mb-2 flex items-center justify-between">
-          <span className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">Latest Signal</span>
+          <span className="text-[11px] font-semibold uppercase tracking-[0.24em] text-muted-foreground">{latestSignalLabel}</span>
           <span className="text-2xl font-serif font-bold text-foreground">{value}%</span>
         </div>
 
@@ -126,10 +179,10 @@ const SummaryItem = ({ label, status, detail }) => (
   </div>
 );
 
-const HealthIndicationAvatar = ({ voiceStatus, motorStatus, overallStatus }) => (
+const HealthIndicationAvatar = ({ voiceStatus, motorStatus, overallStatus, copy }) => (
   <div
     className="group/avatar relative mx-auto flex h-[21rem] w-full max-w-[19rem] items-center justify-center overflow-hidden rounded-[2.5rem] border border-border/50 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.88),_rgba(244,247,244,0.72)_42%,_rgba(237,241,237,0.85)_100%)] shadow-[0_35px_80px_-45px_rgba(15,23,42,0.45)] transition-transform duration-500 hover:-translate-y-1"
-    title="Based on latest screening data"
+    title={copy.avatarTooltip}
   >
     <div className={`absolute inset-x-12 top-5 h-20 rounded-full blur-3xl transition-all duration-500 ${overallStatus.glowClass} ${overallStatus.pulseClass}`} />
     <div className={`absolute left-[4.3rem] top-[4rem] h-16 w-16 rounded-full blur-2xl transition-all duration-500 ${voiceStatus.glowClass} ${voiceStatus.pulseClass}`} />
@@ -170,31 +223,33 @@ const HealthIndicationAvatar = ({ voiceStatus, motorStatus, overallStatus }) => 
 
     <div className="pointer-events-none absolute left-5 top-6 flex items-center gap-2 rounded-full border border-border/60 bg-background/75 px-3 py-1.5 backdrop-blur">
       <span className={`h-2.5 w-2.5 rounded-full ${voiceStatus.markerClass} ${voiceStatus.pulseClass}`} />
-      <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Voice Zone</span>
+      <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{copy.voiceZone}</span>
     </div>
 
     <div className="pointer-events-none absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border border-border/60 bg-background/75 px-3 py-1.5 backdrop-blur">
       <span className={`h-2.5 w-2.5 rounded-full ${motorStatus.markerClass} ${motorStatus.pulseClass}`} />
-      <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Motor Zone</span>
+      <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">{copy.motorZone}</span>
     </div>
   </div>
 );
 
 export default function DigitalTwinCard(props) {
+  const { language } = useLanguage();
+  const copy = twinCopy[language];
   const voiceValue = clampScore(props.voiceStability);
   const drawingValue = clampScore(props.drawingAccuracy);
 
   const visibleMetrics = [
     {
       key: 'voice',
-      label: 'Voice Stability',
-      descriptor: 'Speech consistency and vocal control',
+      label: copy.voiceMetric,
+      descriptor: copy.voiceDescriptor,
       value: voiceValue,
     },
     {
       key: 'drawing',
-      label: 'Drawing Accuracy',
-      descriptor: 'Motor precision during drawing tasks',
+      label: copy.drawingMetric,
+      descriptor: copy.drawingDescriptor,
       value: drawingValue,
     },
   ].filter((metric) => metric.value !== null);
@@ -208,10 +263,10 @@ export default function DigitalTwinCard(props) {
       <div className="flex flex-col gap-8 xl:flex-row xl:items-center">
         <div className="xl:w-[23rem] xl:flex-shrink-0">
           <div className="mb-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.32em] text-primary/80">Digital Twin</p>
-            <h3 className="mt-3 font-serif text-[2rem] font-bold leading-tight text-foreground">Condition-Led Health Avatar</h3>
+            <p className="text-xs font-semibold uppercase tracking-[0.32em] text-primary/80">{copy.digitalTwin}</p>
+            <h3 className="mt-3 font-serif text-[2rem] font-bold leading-tight text-foreground">{copy.avatarTitle}</h3>
             <p className="mt-3 max-w-md text-sm font-medium leading-6 text-muted-foreground">
-              A visual twin of the patient&apos;s latest screening signals, with highlighted speech and motor regions for fast clinical interpretation.
+              {copy.avatarSubtitle}
             </p>
           </div>
 
@@ -219,18 +274,19 @@ export default function DigitalTwinCard(props) {
             voiceStatus={voiceStatus}
             motorStatus={motorStatus}
             overallStatus={overallStatus}
+            copy={copy}
           />
 
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
             <SummaryItem
-              label="Motor Control"
+              label={copy.motorControl}
               status={motorStatus}
-              detail={motorStatus.label === 'Awaiting Data' ? 'Awaiting latest drawing test' : motorStatus.label}
+              detail={motorStatus.label === 'Awaiting Data' ? copy.awaitingDrawing : getStatusLabel(motorStatus.label, language)}
             />
             <SummaryItem
-              label="Voice Stability"
+              label={copy.voiceStability}
               status={voiceStatus}
-              detail={voiceStatus.label === 'Awaiting Data' ? 'Awaiting latest voice sample' : voiceStatus.label}
+              detail={voiceStatus.label === 'Awaiting Data' ? copy.awaitingVoice : getStatusLabel(voiceStatus.label, language)}
             />
           </div>
         </div>
@@ -244,15 +300,17 @@ export default function DigitalTwinCard(props) {
                   label={metric.label}
                   descriptor={metric.descriptor}
                   value={metric.value}
+                  language={language}
+                  latestSignalLabel={copy.latestSignal}
                 />
               ))}
             </div>
           ) : (
             <div className="rounded-[2rem] border border-dashed border-border/70 bg-background/55 px-6 py-8 text-center">
-              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">No active signal cards</p>
-              <h4 className="mt-3 font-serif text-2xl font-bold text-foreground">Awaiting meaningful screening data</h4>
+              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-muted-foreground">{copy.noSignals}</p>
+              <h4 className="mt-3 font-serif text-2xl font-bold text-foreground">{copy.awaitingData}</h4>
               <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted-foreground">
-                Voice and drawing cards appear automatically once the latest saved screening results contain non-zero clinical signals.
+                {copy.noSignalsDescription}
               </p>
             </div>
           )}

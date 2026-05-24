@@ -3,6 +3,7 @@ import { X, LoaderCircle, AlertCircle, Scan, Upload, Mic, Square, RefreshCw } fr
 import { insertTestRecord } from '../services/testPersistence';
 import { useAuth } from '../hooks/useAuth';
 import { predictVoice, type VoicePrediction } from '../services/voiceModel';
+import { blobToDataUrl, getArtifactKindForTest, uploadTestArtifact } from '../utils/testArtifacts';
 
 type VoiceMode = 'record' | 'upload';
 type VoiceAnalysisMethod = 'neural';
@@ -155,6 +156,8 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
   const [predictionSource, setPredictionSource] = useState<VoiceMode>('record');
+  const [samplePreviewUrl, setSamplePreviewUrl] = useState<string | null>(null);
+  const [samplePreviewKind, setSamplePreviewKind] = useState<'audio' | 'video'>('audio');
   const { user } = useAuth();
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -167,8 +170,9 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
     return () => {
       stopRecordingStream();
       clearRecordingTimer();
+      if (samplePreviewUrl) URL.revokeObjectURL(samplePreviewUrl);
     };
-  }, []);
+  }, [samplePreviewUrl]);
 
   const clearRecordingTimer = () => {
     if (timerRef.current !== null) {
@@ -194,6 +198,9 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
     setSaveMessage(null);
     setUploadFile(null);
     setRecordedBlob(null);
+    if (samplePreviewUrl) URL.revokeObjectURL(samplePreviewUrl);
+    setSamplePreviewUrl(null);
+    setSamplePreviewKind('audio');
     setRecordingSeconds(0);
     recordingSecondsRef.current = 0;
     setIsRecording(false);
@@ -202,7 +209,13 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
     }
   };
 
-  const saveVoiceResult = async (result: VoicePrediction, method: VoiceAnalysisMethod, sourceMode: VoiceMode) => {
+  const saveVoiceResult = async (
+    result: VoicePrediction,
+    method: VoiceAnalysisMethod,
+    sourceMode: VoiceMode,
+    artifactBlob: Blob,
+    artifactName: string,
+  ) => {
     if (!user) {
       setSaveMessage('Sign in to save results.');
       return;
@@ -212,6 +225,9 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
     try {
       const probability = result.probabilities.Parkinsons;
       const riskScore = Number((probability * 10).toFixed(1));
+      const artifactPath = await uploadTestArtifact(user.id, 'speech', artifactBlob, 'wav');
+      const localArtifactDataUrl = await blobToDataUrl(artifactBlob);
+      const artifactType = getArtifactKindForTest('speech', artifactBlob.type) || 'audio';
 
       const resultPayload = {
         label: result.label,
@@ -224,12 +240,15 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
         source: sourceMode === 'record' ? 'voice-screening-live' : 'voice-screening-upload',
         modelType: method,
         modelName: result.modelInfo.name,
+        artifactType,
+        artifactMimeType: artifactBlob.type || 'audio/wav',
+        artifactName,
       };
 
       const { id } = await insertTestRecord({
         patient_id: user.id,
         test_type: 'speech',
-        raw_storage_path: null,
+        raw_storage_path: artifactPath || 'local-voice',
         status: 'completed',
         result: resultPayload,
         confidence: probability,
@@ -245,10 +264,13 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
         id: id || `local-${Date.now()}`,
         patient_id: user.id,
         test_type: 'speech',
-        raw_storage_path: null,
+        raw_storage_path: artifactPath || 'local-voice',
         status: 'completed',
         created_at: new Date().toISOString(),
-        result: resultPayload,
+        result: {
+          ...resultPayload,
+          ...(localArtifactDataUrl ? { artifactDataUrl: localArtifactDataUrl } : {}),
+        },
         confidence: probability,
         model_versions: {
           voiceNeural: result.modelInfo.name,
@@ -280,12 +302,18 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
         sourceMode === 'record'
           ? await convertRecordedBlobToWav(audioBlob)
           : new Blob([await audioBlob.arrayBuffer()], { type: audioBlob.type || 'audio/webm' });
+      const artifactName = sourceMode === 'record'
+        ? `voice-recording-${Date.now()}.wav`
+        : (audioBlob instanceof File ? audioBlob.name : `voice-upload-${Date.now()}`);
+      if (samplePreviewUrl) URL.revokeObjectURL(samplePreviewUrl);
+      setSamplePreviewUrl(URL.createObjectURL(blob));
+      setSamplePreviewKind(getArtifactKindForTest('speech', blob.type) === 'video' ? 'video' : 'audio');
       setAnalysisStep('Analyzing with voice model...');
-      const result = await predictVoice(blob);
+      const result = await predictVoice(blob, artifactName);
 
       setAnalysisStep('Saving to database...');
       setPrediction(result);
-      await saveVoiceResult(result, 'neural', sourceMode);
+      await saveVoiceResult(result, 'neural', sourceMode, blob, artifactName);
       setAnalysisStep('Analysis complete!');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to analyze voice sample';
@@ -484,7 +512,7 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
                       id="voice-upload"
                       className="hidden"
                       onChange={handleFileUpload}
-                      accept="audio/*"
+                      accept="audio/*,video/*"
                       disabled={analyzing}
                     />
                     <label htmlFor="voice-upload" className="cursor-pointer">
@@ -498,8 +526,8 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
                         </div>
                       ) : (
                         <div className="space-y-1">
-                          <p className="text-base font-semibold text-foreground">Choose an audio file</p>
-                          <p className="text-xs text-muted-foreground">MP3, WAV, or M4A up to 50MB</p>
+                          <p className="text-base font-semibold text-foreground">Choose an audio or video file</p>
+                          <p className="text-xs text-muted-foreground">MP3, WAV, M4A, MP4, or WEBM up to 50MB</p>
                         </div>
                       )}
                     </label>
@@ -597,6 +625,19 @@ const VoiceCaptureModal = ({ onClose }: { onClose: () => void }) => {
                   <div className="rounded-[1.5rem] border border-border/70 bg-background/70 px-4 py-3">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Clinical note</p>
                     <p className="mt-2 text-sm leading-relaxed text-foreground">{prediction.reasoning}</p>
+                  </div>
+                )}
+
+                {samplePreviewUrl && (
+                  <div className="rounded-[1.5rem] border border-border/70 bg-background/70 px-4 py-3">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      {samplePreviewKind === 'video' ? 'Video sample' : 'Voice sample'}
+                    </p>
+                    {samplePreviewKind === 'video' ? (
+                      <video src={samplePreviewUrl} controls className="max-h-64 w-full rounded-xl bg-black" />
+                    ) : (
+                      <audio src={samplePreviewUrl} controls className="w-full" />
+                    )}
                   </div>
                 )}
 

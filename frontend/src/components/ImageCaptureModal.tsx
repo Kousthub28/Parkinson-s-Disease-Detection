@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
 import Card from './Card';
 import { Camera, X, LoaderCircle, AlertCircle, RefreshCw, Upload } from 'lucide-react';
-import { mongodb } from '../lib/mongodbClient';
 import { useAuth } from '../hooks/useAuth';
 import { predictHandwriting, type HandwritingPrediction } from '../services/handwritingModel';
 import { getModelAccuracy, getModelDisplay } from '../config/modelInfo';
 import { insertTestRecord } from '../services/testPersistence';
+import { blobToDataUrl, uploadTestArtifact } from '../utils/testArtifacts';
 
 const ImageCaptureModal = ({ onClose, testType }: { onClose: () => void, testType: string }) => {
   const [captureStatus, setCaptureStatus] = useState<'streaming' | 'captured'>('streaming');
@@ -108,37 +108,30 @@ const ImageCaptureModal = ({ onClose, testType }: { onClose: () => void, testTyp
     setError(null);
     setSuccess(false);
     try {
-      let filePath = 'local-capture';
-      
-      // Try to upload the image to storage
-      try {
-        const fileName = `${user.id}-${Date.now()}.png`;
-        filePath = `${testType}/${user.id}/${fileName}`;
-        const uploadPromise = mongodb.storage.from('test_artifacts').upload(filePath, imageBlob);
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Upload timeout')), 5000));
-        const { error: uploadError } = await Promise.race([uploadPromise, timeoutPromise]) as any;
-        if (uploadError) filePath = 'local-capture';
-      } catch {
-        filePath = 'local-capture';
-      }
+      const filePath = await uploadTestArtifact(user.id, testType, imageBlob, 'png');
+      const localArtifactDataUrl = await blobToDataUrl(imageBlob);
+      const resultPayload = {
+        label: prediction.label,
+        confidence: prediction.confidence,
+        probabilities: prediction.probabilities,
+        summary: (prediction as any).summary,
+        modelUsed: testType,
+        timestamp: new Date().toISOString(),
+        artifactType: 'image',
+        artifactMimeType: imageBlob.type || 'image/png',
+        artifactName: `${testType}-capture.png`,
+      };
       
       // Build Mongo insert payload without a custom id; backend generates ObjectId.
       const testRecord = {
         patient_id: user.id,
         test_type: testType,
-        raw_storage_path: filePath,
+        raw_storage_path: filePath || 'local-capture',
         status: 'completed',
         created_at: new Date().toISOString(),
-        result: {
-          label: prediction.label,
-          confidence: prediction.confidence,
-          probabilities: prediction.probabilities,
-          summary: (prediction as any).summary,
-          modelUsed: testType,
-          timestamp: new Date().toISOString(),
-        },
+        result: resultPayload,
         model_versions: {
-          [testType]: testType === 'spiral' ? `MobileNetV2-${getModelAccuracy('spiral')}` : 'InceptionV3',
+          [testType]: testType === 'spiral' ? `MobileNetV2-${getModelAccuracy('spiral')}` : `InceptionV3-${getModelAccuracy('wave')}`,
         },
         confidence: prediction.confidence,
       };
@@ -153,7 +146,14 @@ const ImageCaptureModal = ({ onClose, testType }: { onClose: () => void, testTyp
       }
 
       const localId = savedMongoId || `local-${Date.now()}`;
-      const localRecord = { ...testRecord, id: localId };
+      const localRecord = {
+        ...testRecord,
+        id: localId,
+        result: {
+          ...resultPayload,
+          ...(localArtifactDataUrl ? { artifactDataUrl: localArtifactDataUrl } : {}),
+        },
+      };
       const localTests = JSON.parse(localStorage.getItem('local_tests') || '[]');
       localTests.unshift(localRecord);
       localStorage.setItem('local_tests', JSON.stringify(localTests));
@@ -180,6 +180,10 @@ const ImageCaptureModal = ({ onClose, testType }: { onClose: () => void, testTyp
             probabilities: prediction.probabilities,
             modelUsed: testType,
             timestamp: new Date().toISOString(),
+            artifactType: 'image',
+            artifactMimeType: imageBlob.type || 'image/png',
+            artifactName: `${testType}-capture.png`,
+            artifactDataUrl: await blobToDataUrl(imageBlob),
           },
           confidence: prediction.confidence,
         };
@@ -231,7 +235,7 @@ const ImageCaptureModal = ({ onClose, testType }: { onClose: () => void, testTyp
                   <span className="font-bold">{(prediction.confidence * 100).toFixed(2)}%</span>
                 </div>
                 <div className="text-sm text-muted-foreground mt-3 border-t border-border pt-3">
-                  <p><strong>Model Used:</strong> {prediction.modelUsed === 'spiral' ? `${getModelDisplay('spiral')} accuracy` : 'VGG16'}</p>
+                  <p><strong>Model Used:</strong> {prediction.modelUsed === 'spiral' ? `${getModelDisplay('spiral')} accuracy` : getModelDisplay('wave')}</p>
                 </div>
               </div>
             )}
@@ -290,7 +294,7 @@ const ImageCaptureModal = ({ onClose, testType }: { onClose: () => void, testTyp
                   </div>
                 </div>
                 <div className="text-xs text-muted-foreground bg-background p-3 rounded">
-                  <strong>Model:</strong> {prediction.modelUsed === 'spiral' ? `${getModelDisplay('spiral')} test accuracy` : 'VGG16'}
+                  <strong>Model:</strong> {prediction.modelUsed === 'spiral' ? `${getModelDisplay('spiral')} test accuracy` : getModelDisplay('wave')}
                 </div>
               </div>
             )}

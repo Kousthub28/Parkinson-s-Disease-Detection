@@ -262,6 +262,7 @@ export function getModalityDisplayName(type: string): string {
     case 'spiral': return 'Spiral Drawing';
     case 'wave': return 'Wave Drawing';
     case 'speech': return 'Voice Analysis';
+    case 'video': return 'Eye Movement';
     default: return type;
   }
 }
@@ -274,6 +275,7 @@ export function getModalityModelName(type: string): string {
     case 'spiral': return 'MobileNetV2';
     case 'wave': return 'InceptionV3';
     case 'speech': return 'KNN Classifier';
+    case 'video': return 'Face Mesh + OpenCV';
     default: return 'Unknown';
   }
 }

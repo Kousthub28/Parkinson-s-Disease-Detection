@@ -3,10 +3,46 @@ import { MapPin, Phone, Video, Clock, Languages, Stethoscope, LoaderCircle } fro
 import { useNavigate } from 'react-router-dom';
 import Card from '../components/Card';
 import { useAuth } from '../hooks/useAuth';
+import { useLanguage } from '../context/LanguageContext';
 import { getAppointments, listApprovedDoctors } from '../services/healthcareApi';
 import { downloadUnifiedReportPdf } from '../utils/reportUtils';
 import { collapseAppointments, isActiveAppointment, isHistoricalAppointment, isRejectedAppointment } from '../utils/appointments';
 import type { AppUser, AppointmentRecord } from '../types/healthcare';
+
+const consultCopy = {
+  en: {
+    consultSpecialist: 'Consult a Specialist',
+    bookWithApprovedDoctors: 'Book with approved doctors already inside the platform so appointments, AI reports, prescriptions, and calls stay connected.',
+    searchDoctorHospitalSpecialty: 'Search doctor, hospital, specialty...',
+    platformConnectedDoctors: 'Platform-connected doctors',
+    doctorsShownApproved: 'Doctors shown here have approved platform accounts, so the appointment links directly to the same unified report they will review.',
+    emergencySymptoms: 'Emergency symptoms such as sudden weakness, chest pain, or confusion require immediate local medical attention.',
+    yourConsultations: 'Your Consultations',
+    trackDoctorDecisions: 'Track doctor decisions, updated timing, and reviewed reports here.',
+    active: 'Active',
+    pending: 'Pending',
+    histories: 'Histories',
+    status: 'Status',
+    report: 'Report',
+    doctorResponse: 'Doctor response',
+  },
+  kn: {
+    consultSpecialist: 'ವೈದ್ಯರನ್ನು ಸಂಪರ್ಕಿಸಿ',
+    bookWithApprovedDoctors: 'ಅಪಾಯಿಂಟ್‌ಮೆಂಟ್‌ಗಳು, ಎಐ ವರದಿಗಳು, ಔಷಧ ಪತ್ರಿಕೆಗಳು ಮತ್ತು ಕರೆಗಳು ಸಂಪರ್ಕದಲ್ಲಿರುವಂತೆ ಪ್ಲಾಟ್‌ಫಾರ್ಮ್‌ನಲ್ಲಿ ಈಗಾಗಲೇ ಅನುಮೋದಿಸಿದ ವೈದ್ಯರೊಂದಿಗೆ ಬುಕ್ ಮಾಡಿ.',
+    searchDoctorHospitalSpecialty: 'ವೈದ್ಯ, ಆಸ್ಪತ್ರೆ, ವಿಶೇಷತೆ ಹುಡುಕಿ...',
+    platformConnectedDoctors: 'ಪ್ಲಾಟ್‌ಫಾರ್ಮ್-ಸಂಪರ್ಕಿತ ವೈದ್ಯರು',
+    doctorsShownApproved: 'ಇಲ್ಲಿ ತೋರಿಸಿದ ವೈದ್ಯರು ಅನುಮೋದಿತ ಪ್ಲಾಟ್‌ಫಾರ್ಮ್ ಖಾತೆಗಳನ್ನು ಹೊಂದಿದ್ದಾರೆ, ಆದ್ದರಿಂದ ಅಪಾಯಿಂಟ್‌ಮೆಂಟ್ ಅದೇ ಏಕೀಕೃತ ವರದಿಗೆ ನೇರವಾಗಿ ಲಿಂಕ್ ಆಗುತ್ತದೆ ಅವರು ವಿಮರ್ಶಿಸುತ್ತಾರೆ.',
+    emergencySymptoms: 'ಹಠಾತ್ ದೌರ್ಬಲ್ಯ, ಎದೆ ನೋವು ಅಥವಾ ಗೊಂದಲದಂತಹ ತುರ್ತು ಲಕ್ಷಣಗಳು ತತ್ಕ್ಷಣ ಸ್ಥಳೀಯ ವೈದ್ಯಕೀಯ ದಾಖಲಾತಿಗೆ ಅಗತ್ಯವಿರುತ್ತದೆ.',
+    yourConsultations: 'ನಿಮ್ಮ ಸಲಹೆಗಳು',
+    trackDoctorDecisions: 'ವೈದ್ಯರ ನಿರ್ಧಾರಗಳು, ನವೀಕರಿಸಿದ ಸಮಯ ಮತ್ತು ವಿಮರ್ಶಿಸಿದ ವರದಿಗಳನ್ನು ಇಲ್ಲಿ ಟ್ರ್ಯಾಕ್ ಮಾಡಿ.',
+    active: 'ಸಕ್ರಿಯ',
+    pending: 'ಬಾಕಿ',
+    histories: 'ಇತಿಹಾಸಗಳು',
+    status: 'ಸ್ಥಿತಿ',
+    report: 'ವರದಿ',
+    doctorResponse: 'ವೈದ್ಯರ ಪ್ರತಿಕ್ರಿಯೆ',
+  },
+} as const;
 
 const defaultSlots = [
   { day: 'Monday', time: '10:00 AM' },
@@ -16,6 +52,8 @@ const defaultSlots = [
 
 const Consult = () => {
   const { user } = useAuth();
+  const { language } = useLanguage();
+  const copy = consultCopy[language];
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
   const [doctors, setDoctors] = useState<AppUser[]>([]);
@@ -99,17 +137,17 @@ const Consult = () => {
             <div className="p-3 bg-primary/10 rounded-[2rem]">
               <Stethoscope className="h-8 w-8 text-primary" />
             </div>
-            <h2 className="text-4xl font-serif font-bold text-foreground">Consult a Specialist</h2>
+            <h2 className="text-4xl font-serif font-bold text-foreground">{copy.consultSpecialist}</h2>
           </div>
           <p className="text-muted-foreground text-lg leading-relaxed">
-            Book with approved doctors already inside the platform so appointments, AI reports, prescriptions, and calls stay connected.
+            {copy.bookWithApprovedDoctors}
           </p>
         </div>
         <input
           type="text"
           value={searchTerm}
           onChange={(event) => setSearchTerm(event.target.value)}
-          placeholder="Search doctor, hospital, specialty..."
+          placeholder={copy.searchDoctorHospitalSpecialty}
           className="rounded-full border border-border/60 bg-white/60 backdrop-blur-sm px-5 py-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary shadow-sm hover:border-primary/50 transition-colors"
         />
       </div>
@@ -121,14 +159,14 @@ const Consult = () => {
               <Stethoscope className="h-6 w-6 text-primary" />
             </div>
             <div>
-              <h3 className="font-serif font-bold text-foreground text-lg">Platform-connected doctors</h3>
+              <h3 className="font-serif font-bold text-foreground text-lg">{copy.platformConnectedDoctors}</h3>
               <p className="text-sm font-medium text-muted-foreground mt-1 leading-relaxed">
-                Doctors shown here have approved platform accounts, so the appointment links directly to the same unified report they will review.
+                {copy.doctorsShownApproved}
               </p>
             </div>
           </div>
           <p className="text-xs font-bold text-secondary max-w-xs lg:text-right bg-secondary/10 px-4 py-3 rounded-[1.5rem]">
-            Emergency symptoms such as sudden weakness, chest pain, or confusion require immediate local medical attention.
+            {copy.emergencySymptoms}
           </p>
         </div>
       </Card>
@@ -137,8 +175,8 @@ const Consult = () => {
         <div className="space-y-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
-            <h3 className="text-2xl font-serif font-bold text-foreground">Your Consultations</h3>
-              <p className="text-sm text-muted-foreground mt-1">Track doctor decisions, updated timing, and reviewed reports here.</p>
+            <h3 className="text-2xl font-serif font-bold text-foreground">{copy.yourConsultations}</h3>
+              <p className="text-sm text-muted-foreground mt-1">{copy.trackDoctorDecisions}</p>
             </div>
             <div className="inline-flex rounded-full border border-border/50 bg-white/70 p-1">
               <button
@@ -146,21 +184,21 @@ const Consult = () => {
                 onClick={() => setConsultView('active')}
                 className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${consultView === 'active' ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted/40'}`}
               >
-                Active
+                {consultView === 'active' ? copy.active : copy.active}
               </button>
               <button
                 type="button"
                 onClick={() => setConsultView('history')}
                 className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${consultView === 'history' ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted/40'}`}
               >
-                Pending
+                {copy.pending}
               </button>
               <button
                 type="button"
                 onClick={() => setConsultView('reviews')}
                 className={`rounded-full px-4 py-2 text-sm font-semibold transition-colors ${consultView === 'reviews' ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-muted/40'}`}
               >
-                Histories
+                {copy.histories}
               </button>
             </div>
           </div>
@@ -175,16 +213,16 @@ const Consult = () => {
                       {new Date(appointment.appointment_date).toLocaleDateString()} at {appointment.appointment_time}
                     </p>
                     <p className="text-sm text-muted-foreground capitalize">
-                      Status: <span className="font-semibold text-foreground">{appointment.status}</span>
+                      {copy.status}: <span className="font-semibold text-foreground">{appointment.status}</span>
                     </p>
                     {appointment.report?.status && (
                       <p className="text-sm text-muted-foreground capitalize">
-                        Report: <span className="font-semibold text-foreground">{appointment.report.status}</span>
+                        {copy.report}: <span className="font-semibold text-foreground">{appointment.report.status}</span>
                       </p>
                     )}
                     {appointment.doctor_response_notes && (
                       <p className="text-sm text-muted-foreground">
-                        Doctor response: <span className="font-semibold text-foreground">{appointment.doctor_response_notes}</span>
+                        {copy.doctorResponse}: <span className="font-semibold text-foreground">{appointment.doctor_response_notes}</span>
                       </p>
                     )}
                     {appointment.report?.prescription?.length ? (

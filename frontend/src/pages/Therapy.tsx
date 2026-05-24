@@ -10,7 +10,109 @@ import { AdvancedAnalyzer } from '../components/AdvancedAnalyzer';
 import { ExerciseEngine } from '../components/ExerciseEngine';
 import { TherapyAIAgent } from '../components/AIAgent';
 import { ProgressionTracker } from '../components/ProgressionTracker';
+import { useLanguage } from '../context/LanguageContext';
 import type { ExerciseUpdate, SessionReport, SymptomAnalysis } from '../components/therapyTypes';
+
+const therapyCopy = {
+  en: {
+    realTimeTherapy: 'Real-Time Therapy',
+    title: "Parkinson's Detection + Therapy Assistant",
+    subtitle: 'Live webcam assessment with pose tracking, symptom scoring, adaptive exercises, voice coaching, milestones, and a session report.',
+    starting: 'Starting...',
+    startSession: 'Start Session',
+    resume: 'Resume',
+    pause: 'Pause',
+    endSession: 'End Session',
+    poseModelError: 'Failed to load the pose model. This is a browser/network issue. Try: 1) Reload the page, 2) Clear browser cache, 3) Use a modern browser (Chrome, Firefox, Edge)',
+    browserSupportError: "Your browser doesn't support pose detection. Please use Chrome, Firefox, or Edge.",
+    sessionStartError: 'Unable to start the therapy session.',
+    sessionFailed: 'Session failed to start',
+    idle: 'Idle',
+    sessionComplete: 'Session complete',
+    tremor: 'Tremor',
+    yes: 'YES',
+    no: 'NO',
+    score: 'Score',
+    speed: 'Speed',
+    bradykinesiaScore: 'Bradykinesia score',
+    stability: 'Stability',
+    tilt: 'Tilt',
+    degrees: '°',
+    currentExercise: 'Current Exercise',
+    waitingToStart: 'Waiting to start',
+    startSessionInstruction: 'Start the session to begin your guided assessment.',
+    repCounter: 'Rep counter',
+    timer: 'Timer',
+    accuracy: 'Accuracy',
+    checkingPosture: 'Checking posture',
+    riskLevel: 'Risk level',
+    amplitude: 'Amplitude',
+    aiTherapyAgent: 'AI Therapy Agent',
+    correctNow: 'Correct now:',
+    preparingSession: 'Preparing session',
+    assessmentComplete: 'Assessment complete. Risk level is',
+    rigidityLevel: 'Rigidity level is',
+    slow: 'SLOW',
+    normal: 'NORMAL',
+    fast: 'FAST',
+    poor: 'POOR',
+    good: 'GOOD',
+    reduced: 'REDUCED',
+    normalAmp: 'NORMAL',
+    low: 'LOW',
+    medium: 'MEDIUM',
+    high: 'HIGH',
+  },
+  kn: {
+    realTimeTherapy: 'ನೈಜ ಸಮಯದ ಚಿಕಿತ್ಸೆ',
+    title: 'ಪಾರ್ಕಿನ್ಸನ್ ಕಂಡುಹಿಡಿಕೆ + ಚಿಕಿತ್ಸೆ ಸಹಾಯಕ',
+    subtitle: 'ಪೋಸ್ ಟ್ರ್ಯಾಕಿಂಗ್, ಲಕ್ಷಣ ಸ್ಕೋರಿಂಗ್, ಅಡಾಪ್ಟಿವ್ ವ್ಯಾಯಾಮಗಳು, ಧ್ವನಿ ಕೋಚಿಂಗ್, ಮೈಲಿಗಲ್ಲುಗಳು ಮತ್ತು ಸೆಷನ್ ವರದಿಯೊಂದಿಗೆ ಲೈವ್ ವೆಬ್‌ಕ್ಯಾಮ್ ಮೌಲ್ಯಮಾಪನ.',
+    starting: 'ಪ್ರಾರಂಭಿಸುತ್ತಿದೆ...',
+    startSession: 'ಸೆಷನ್ ಪ್ರಾರಂಭಿಸಿ',
+    resume: 'ಮುಂದುವರಿಸಿ',
+    pause: 'ವಿರಾಮ',
+    endSession: 'ಸೆಷನ್ ಅಂತ್ಯಗೊಳಿಸಿ',
+    poseModelError: 'ಪೋಸ್ ಮಾಡೆಲ್ ಲೋಡ್ ಮಾಡಲು ವಿಫಲವಾಗಿದೆ. ಇದು ಬ್ರೌಸರ್/ನೆಟ್‌ವರ್ಕ್ ಸಮಸ್ಯೆ. ಪ್ರಯತ್ನಿಸಿ: 1) ಪುಟವನ್ನು ಮರುಲೋಡ್ ಮಾಡಿ, 2) ಬ್ರೌಸರ್ ಕ್ಯಾಶೆ ತೆರವುಗೊಳಿಸಿ, 3) ಆಧುನಿಕ ಬ್ರೌಸರ್ ಬಳಸಿ (ಕ್ರೋಮ್, ಫೈರ್‌ಫಾಕ್ಸ್, ಎಡ್ಜ್)',
+    browserSupportError: 'ನಿಮ್ಮ ಬ್ರೌಸರ್ ಪೋಸ್ ಡಿಟೆಕ್ಷನ್ ಅನ್ನು ಬೆಂಬಲಿಸುವುದಿಲ್ಲ. ದಯವಿಟ್ಟು ಕ್ರೋಮ್, ಫೈರ್‌ಫಾಕ್ಸ್ ಅಥವಾ ಎಡ್ಜ್ ಬಳಸಿ.',
+    sessionStartError: 'ಚಿಕಿತ್ಸೆ ಸೆಷನ್ ಪ್ರಾರಂಭಿಸಲು ಸಾಧ್ಯವಿಲ್ಲ.',
+    sessionFailed: 'ಸೆಷನ್ ಪ್ರಾರಂಭಿಸಲು ವಿಫಲವಾಗಿದೆ',
+    idle: 'ನಿಷ್ಕ್ರಿಯ',
+    sessionComplete: 'ಸೆಷನ್ ಪೂರ್ಣಗೊಂಡಿದೆ',
+    tremor: 'ಕಂಪನ',
+    yes: 'ಹೌದು',
+    no: 'ಇಲ್ಲ',
+    score: 'ಸ್ಕೋರ್',
+    speed: 'ವೇಗ',
+    bradykinesiaScore: 'ಬ್ರಾಡಿಕೈನೆಸಿಯಾ ಸ್ಕೋರ್',
+    stability: 'ಸ್ಥಿರತೆ',
+    tilt: 'ಓಲು',
+    degrees: '°',
+    currentExercise: 'ಪ್ರಸ್ತುತ ವ್ಯಾಯಾಮ',
+    waitingToStart: 'ಪ್ರಾರಂಭಿಸಲು ನಿರೀಕ್ಷಿಸುತ್ತಿದೆ',
+    startSessionInstruction: 'ನಿಮ್ಮ ಮಾರ್ಗದರ್ಶಿತ ಮೌಲ್ಯಮಾಪನವನ್ನು ಪ್ರಾರಂಭಿಸಲು ಸೆಷನ್ ಪ್ರಾರಂಭಿಸಿ.',
+    repCounter: 'ಪುನರಾವರ್ತನೆ ಎಣಿಕೆ',
+    timer: 'ಟೈಮರ್',
+    accuracy: 'ನಿಖರತೆ',
+    checkingPosture: 'ಪೋಸ್ಚರ್ ಪರಿಶೀಲಿಸುತ್ತಿದೆ',
+    riskLevel: 'ಅಪಾಯ ಮಟ್ಟ',
+    amplitude: 'ವಿಸ್ತೀರ್ಣತೆ',
+    aiTherapyAgent: 'ಎಐ ಚಿಕಿತ್ಸೆ ಏಜೆಂಟ್',
+    correctNow: 'ಈಗ ಸರಿಪಡಿಸಿ:',
+    preparingSession: 'ಸೆಷನ್ ಸಿದ್ಧಪಡಿಸುತ್ತಿದೆ',
+    assessmentComplete: 'ಮೌಲ್ಯಮಾಪನ ಪೂರ್ಣಗೊಂಡಿದೆ. ಅಪಾಯ ಮಟ್ಟವು',
+    rigidityLevel: 'ದೃಢತೆ ಮಟ್ಟವು',
+    slow: 'ನಿಧಾನ',
+    normal: 'ಸಾಮಾನ್ಯ',
+    fast: 'ವೇಗ',
+    poor: 'ಕಳಪೆ',
+    good: 'ಉತ್ತಮ',
+    reduced: 'ಕಡಿಮೆ',
+    normalAmp: 'ಸಾಮಾನ್ಯ',
+    low: 'ಕಡಿಮೆ',
+    medium: 'ಮಧ್ಯಮ',
+    high: 'ಹೆಚ್ಚು',
+  },
+} as const;
 
 const STORAGE_KEY = 'therapy-session-history-v2';
 
@@ -64,6 +166,8 @@ const formatClock = (seconds: number) => {
 };
 
 const Therapy = () => {
+  const { language } = useLanguage();
+  const copy = therapyCopy[language];
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -259,12 +363,12 @@ const Therapy = () => {
       setReport(nextReport);
       setSessionStarted(false);
       setPaused(false);
-      setStatusText('Session complete');
+      setStatusText(copy.sessionComplete);
       const nextHistory = [nextReport, ...readHistory()].slice(0, 12);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(nextHistory));
       setHistory(nextHistory);
     });
-    speak(`Assessment complete. Risk level is ${currentAnalysis.overallRisk}. Rigidity level is ${Math.round(advancedSummary?.avgRigidity ?? 0)}.`);
+    speak(`${copy.assessmentComplete} ${currentAnalysis.overallRisk}. ${copy.rigidityLevel} ${Math.round(advancedSummary?.avgRigidity ?? 0)}.`);
     cleanup();
   }, [cleanup, speak]);
 
@@ -404,13 +508,13 @@ const Therapy = () => {
       cleanup();
       const message = sessionError instanceof Error
         ? sessionError.message.includes('load pose runtime') || sessionError.message.includes('initialization has failed')
-          ? 'Failed to load the pose model. This is a browser/network issue. Try: 1) Reload the page, 2) Clear browser cache, 3) Use a modern browser (Chrome, Firefox, Edge)'
+          ? copy.poseModelError
           : sessionError.message.includes('unavailable in this browser')
-            ? 'Your browser doesn\'t support pose detection. Please use Chrome, Firefox, or Edge.'
+            ? copy.browserSupportError
             : sessionError.message
-        : 'Unable to start the therapy session.';
+        : copy.sessionStartError;
       setError(message);
-      setStatusText('Session failed to start');
+      setStatusText(copy.sessionFailed);
     } finally {
       setLoading(false);
     }
@@ -430,7 +534,7 @@ const Therapy = () => {
     setSessionStarted(false);
     setReport(null);
     setError(null);
-    setStatusText('Idle');
+    setStatusText(copy.idle);
   };
 
   if (report) {
@@ -451,10 +555,10 @@ const Therapy = () => {
         <Card className="rounded-organic-2 border-none bg-[linear-gradient(135deg,rgba(93,112,82,0.15),rgba(193,140,93,0.14),rgba(255,255,255,0.88))]">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-sm uppercase tracking-[0.25em] text-muted-foreground">Real-Time Therapy</p>
-              <h1 className="mt-2 text-4xl font-bold text-foreground">Parkinson's Detection + Therapy Assistant</h1>
+              <p className="text-sm uppercase tracking-[0.25em] text-muted-foreground">{copy.realTimeTherapy}</p>
+              <h1 className="mt-2 text-4xl font-bold text-foreground">{copy.title}</h1>
               <p className="mt-3 max-w-3xl text-sm text-muted-foreground">
-                Live webcam assessment with pose tracking, symptom scoring, adaptive exercises, voice coaching, milestones, and a session report.
+                {copy.subtitle}
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
@@ -465,7 +569,7 @@ const Therapy = () => {
                   className="inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground transition-transform duration-300 hover:-translate-y-0.5 disabled:opacity-60"
                 >
                   <Play className="h-4 w-4" />
-                  {loading ? 'Starting...' : 'Start Session'}
+                  {loading ? copy.starting : copy.startSession}
                 </button>
               ) : (
                 <>
@@ -474,14 +578,14 @@ const Therapy = () => {
                     className="inline-flex items-center gap-2 rounded-full border border-border bg-white/75 px-6 py-3 text-sm font-semibold text-foreground"
                   >
                     {paused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
-                    {paused ? 'Resume' : 'Pause'}
+                    {paused ? copy.resume : copy.pause}
                   </button>
                   <button
                     onClick={finishSession}
                     className="inline-flex items-center gap-2 rounded-full bg-destructive px-6 py-3 text-sm font-semibold text-destructive-foreground"
                   >
                     <Square className="h-4 w-4" />
-                    End Session
+                    {copy.endSession}
                   </button>
                 </>
               )}
@@ -510,19 +614,19 @@ const Therapy = () => {
 
             <div className="grid gap-4 md:grid-cols-3">
               <Card className="rounded-organic-1">
-                <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Tremor</p>
-                <p className="mt-3 text-3xl font-bold">{analysis.issues.tremor ? 'YES' : 'NO'}</p>
-                <p className="mt-2 text-sm text-muted-foreground">Score {analysis.tremorScore}</p>
+                <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">{copy.tremor}</p>
+                <p className="mt-3 text-3xl font-bold">{analysis.issues.tremor ? copy.yes : copy.no}</p>
+                <p className="mt-2 text-sm text-muted-foreground">{copy.score} {analysis.tremorScore}</p>
               </Card>
               <Card className="rounded-organic-2">
-                <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Speed</p>
-                <p className="mt-3 text-3xl font-bold">{analysis.issues.speed}</p>
-                <p className="mt-2 text-sm text-muted-foreground">Bradykinesia score {analysis.bradykinesiaScore}</p>
+                <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">{copy.speed}</p>
+                <p className="mt-3 text-3xl font-bold">{analysis.issues.speed === 'SLOW' ? copy.slow : analysis.issues.speed === 'NORMAL' ? copy.normal : analysis.issues.speed === 'FAST' ? copy.fast : analysis.issues.speed}</p>
+                <p className="mt-2 text-sm text-muted-foreground">{copy.bradykinesiaScore} {analysis.bradykinesiaScore}</p>
               </Card>
               <Card className="rounded-organic-3">
-                <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Stability</p>
-                <p className="mt-3 text-3xl font-bold">{analysis.issues.stability}</p>
-                <p className="mt-2 text-sm text-muted-foreground">Tilt {analysis.issues.postureTiltDegrees}&deg;</p>
+                <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">{copy.stability}</p>
+                <p className="mt-3 text-3xl font-bold">{analysis.issues.stability === 'POOR' ? copy.poor : analysis.issues.stability === 'GOOD' ? copy.good : analysis.issues.stability}</p>
+                <p className="mt-2 text-sm text-muted-foreground">{copy.tilt} {analysis.issues.postureTiltDegrees}{copy.degrees}</p>
               </Card>
             </div>
           </div>
@@ -531,9 +635,9 @@ const Therapy = () => {
             <Card className="rounded-organic-3">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Current Exercise</p>
-                  <h2 className="mt-2 text-2xl font-semibold">{currentExercise?.name ?? 'Waiting to start'}</h2>
-                  <p className="mt-2 text-sm text-muted-foreground">{currentExercise?.description ?? 'Start the session to begin your guided assessment.'}</p>
+                  <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">{copy.currentExercise}</p>
+                  <h2 className="mt-2 text-2xl font-semibold">{currentExercise?.name ?? copy.waitingToStart}</h2>
+                  <p className="mt-2 text-sm text-muted-foreground">{currentExercise?.description ?? copy.startSessionInstruction}</p>
                 </div>
                 <div className="rounded-full bg-accent px-3 py-1 text-xs font-semibold text-accent-foreground">
                   {exerciseUpdate.exerciseIndex + (sessionStarted && currentExercise ? 1 : 0)}/{exerciseUpdate.totalExercises}
@@ -545,7 +649,7 @@ const Therapy = () => {
 
                 <div>
                   <div className="mb-2 flex items-center justify-between text-sm text-muted-foreground">
-                    <span>Rep counter</span>
+                    <span>{copy.repCounter}</span>
                     <span className="font-semibold text-foreground">
                       {exerciseUpdate.metrics.reps}/{exerciseUpdate.metrics.targetReps}
                     </span>
@@ -560,21 +664,21 @@ const Therapy = () => {
 
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div className="rounded-3xl bg-muted/70 p-4">
-                    <p className="text-muted-foreground">Timer</p>
+                    <p className="text-muted-foreground">{copy.timer}</p>
                     <p className="mt-1 text-2xl font-bold text-foreground">{formatClock(exerciseUpdate.metrics.timerSeconds)}</p>
                   </div>
                   <div className="rounded-3xl bg-muted/70 p-4">
-                    <p className="text-muted-foreground">Accuracy</p>
+                    <p className="text-muted-foreground">{copy.accuracy}</p>
                     <p className="mt-1 text-2xl font-bold text-foreground">{exerciseUpdate.metrics.accuracy}%</p>
-                    <p className="mt-1 text-xs text-muted-foreground">{exerciseUpdate.metrics.postureFeedback ?? 'Checking posture'}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{exerciseUpdate.metrics.postureFeedback ?? copy.checkingPosture}</p>
                   </div>
                   <div className="rounded-3xl bg-muted/70 p-4">
-                    <p className="text-muted-foreground">Risk level</p>
-                    <p className="mt-1 text-2xl font-bold text-foreground">{analysis.overallRisk}</p>
+                    <p className="text-muted-foreground">{copy.riskLevel}</p>
+                    <p className="mt-1 text-2xl font-bold text-foreground">{analysis.overallRisk === 'LOW' ? copy.low : analysis.overallRisk === 'MEDIUM' ? copy.medium : analysis.overallRisk === 'HIGH' ? copy.high : analysis.overallRisk}</p>
                   </div>
                   <div className="rounded-3xl bg-muted/70 p-4">
-                    <p className="text-muted-foreground">Amplitude</p>
-                    <p className="mt-1 text-2xl font-bold text-foreground">{analysis.issues.amplitude}</p>
+                    <p className="text-muted-foreground">{copy.amplitude}</p>
+                    <p className="mt-1 text-2xl font-bold text-foreground">{analysis.issues.amplitude === 'REDUCED' ? copy.reduced : analysis.issues.amplitude === 'NORMAL' ? copy.normalAmp : analysis.issues.amplitude}</p>
                   </div>
                 </div>
               </div>
@@ -583,12 +687,12 @@ const Therapy = () => {
             <Card className="rounded-organic-1">
               <div className="flex items-center gap-2">
                 <Brain className="h-5 w-5 text-primary" />
-                <h3 className="text-lg font-semibold">AI Therapy Agent</h3>
+                <h3 className="text-lg font-semibold">{copy.aiTherapyAgent}</h3>
               </div>
               <p className="mt-4 text-sm text-muted-foreground">{statusText}</p>
               {exerciseUpdate.metrics.correctiveCommand && (
                 <div className="mt-4 rounded-3xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
-                  Correct now: {exerciseUpdate.metrics.correctiveCommand}
+                  {copy.correctNow} {exerciseUpdate.metrics.correctiveCommand}
                 </div>
               )}
               {exerciseUpdate.metrics.milestone && (

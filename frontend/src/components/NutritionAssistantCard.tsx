@@ -61,6 +61,11 @@ const classifyBmi = (bmi: number) => {
   return 'Obese';
 };
 
+const toInputValue = (value: unknown) => {
+  if (value === null || value === undefined) return '';
+  return String(value);
+};
+
 const getBmiInsights = (classification: string) => {
   if (classification === 'Underweight') {
     return [
@@ -153,7 +158,7 @@ const evaluateIntake = (intakeText: string, hydrationLiters: number) => {
 };
 
 const NutritionAssistantCard = () => {
-  const { user } = useAuth();
+  const { user, profile: authProfile } = useAuth();
   const [profile, setProfile] = useState<Profile>(defaultProfile);
   const [bmi, setBmi] = useState<number | null>(null);
   const [bmiClass, setBmiClass] = useState<string>('');
@@ -236,6 +241,22 @@ const NutritionAssistantCard = () => {
 
     loadLatestNutritionSnapshot();
   }, [user]);
+
+  useEffect(() => {
+    if (!authProfile) return;
+
+    setProfile((prev) => ({
+      ...prev,
+      age: authProfile.age !== null && authProfile.age !== undefined ? toInputValue(authProfile.age) : prev.age,
+      weightKg: authProfile.weightKg !== null && authProfile.weightKg !== undefined ? toInputValue(authProfile.weightKg) : prev.weightKg,
+      heightCm: authProfile.heightCm !== null && authProfile.heightCm !== undefined ? toInputValue(authProfile.heightCm) : prev.heightCm,
+    }));
+
+    if (typeof authProfile.bmi === 'number') {
+      setBmi(authProfile.bmi);
+      setBmiClass(authProfile.bmiClass || classifyBmi(authProfile.bmi));
+    }
+  }, [authProfile]);
 
   const persistNutritionSnapshot = async (snapshot: NutritionSnapshot) => {
     localStorage.setItem(PROFILE_KEY, JSON.stringify(snapshot.profile));

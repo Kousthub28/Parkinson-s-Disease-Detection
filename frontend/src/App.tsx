@@ -20,6 +20,7 @@ import ReportDetails from './pages/ReportDetails';
 import AppointmentCommunication from './pages/AppointmentCommunication';
 import Layout from './components/Layout';
 import { AuthProvider, useAuth } from './hooks/useAuth';
+import { LanguageProvider } from './context/LanguageContext';
 import { LoaderCircle } from 'lucide-react';
 import { getDashboardRouteForRole } from './services/healthcareApi';
 import type { UserRole } from './types/healthcare';
@@ -63,74 +64,76 @@ const DashboardRedirect = () => {
 function App() {
   return (
     <AuthProvider>
-      <Router>
-        <Routes>
-          <Route path="/" element={<Landing />} />
-          <Route path="/login" element={<Auth />} />
-          <Route path="/admin-login" element={<AdminLogin />} />
-          <Route path="/dashboard" element={<DashboardRedirect />} />
-          <Route
-            path="/patient-dashboard"
-            element={<PrivateRoute allowedRoles={['patient']}><Layout><Dashboard /></Layout></PrivateRoute>}
-          />
-          <Route
-            path="/doctor-dashboard"
-            element={<PrivateRoute allowedRoles={['doctor']}><Layout><DoctorDashboard /></Layout></PrivateRoute>}
-          />
-          <Route
-            path="/admin-dashboard"
-            element={<PrivateRoute allowedRoles={['admin']}><Layout><AdminDashboard /></Layout></PrivateRoute>}
-          />
-          <Route
-            path="/new-test"
-            element={<PrivateRoute allowedRoles={['patient']}><Layout><NewTest /></Layout></PrivateRoute>}
-          />
-          <Route
-            path="/history"
-            element={<PrivateRoute allowedRoles={['patient']}><Layout><History /></Layout></PrivateRoute>}
-          />
-          <Route
-            path="/chatbot"
-            element={<PrivateRoute><Layout><Chatbot /></Layout></PrivateRoute>}
-          />
-          <Route
-            path="/orders"
-            element={<PrivateRoute allowedRoles={['patient']}><Layout><Orders /></Layout></PrivateRoute>}
-          />
-          <Route
-            path="/profile"
-            element={<PrivateRoute><Layout><Profile /></Layout></PrivateRoute>}
-          />
-          <Route
-            path="/therapy"
-            element={<PrivateRoute allowedRoles={['patient']}><Layout><Therapy /></Layout></PrivateRoute>}
-          />
-          <Route
-            path="/comprehensive-screening"
-            element={<PrivateRoute allowedRoles={['patient']}><Layout><ComprehensiveScreening /></Layout></PrivateRoute>}
-          />
-          <Route
-            path="/nutrition-planner"
-            element={<PrivateRoute allowedRoles={['patient']}><Layout><NutritionPlanner /></Layout></PrivateRoute>}
-          />
-          <Route
-            path="/consult"
-            element={<PrivateRoute allowedRoles={['patient']}><Layout><Consult /></Layout></PrivateRoute>}
-          />
-          <Route
-            path="/consult/:doctorId/book"
-            element={<PrivateRoute allowedRoles={['patient']}><Layout><DoctorBooking /></Layout></PrivateRoute>}
-          />
-          <Route
-            path="/reports/:reportId"
-            element={<PrivateRoute><Layout><ReportDetails /></Layout></PrivateRoute>}
-          />
-          <Route
-            path="/appointments/:appointmentId/communication"
-            element={<PrivateRoute><Layout><AppointmentCommunication /></Layout></PrivateRoute>}
-          />
-        </Routes>
-      </Router>
+      <LanguageProvider>
+        <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <Routes>
+            <Route path="/" element={<Landing />} />
+            <Route path="/login" element={<Auth />} />
+            <Route path="/admin-login" element={<AdminLogin />} />
+            <Route path="/dashboard" element={<DashboardRedirect />} />
+            <Route
+              path="/patient-dashboard"
+              element={<PrivateRoute allowedRoles={['patient']}><Layout><Dashboard /></Layout></PrivateRoute>}
+            />
+            <Route
+              path="/doctor-dashboard"
+              element={<PrivateRoute allowedRoles={['doctor']}><Layout><DoctorDashboard /></Layout></PrivateRoute>}
+            />
+            <Route
+              path="/admin-dashboard"
+              element={<PrivateRoute allowedRoles={['admin']}><Layout><AdminDashboard /></Layout></PrivateRoute>}
+            />
+            <Route
+              path="/new-test"
+              element={<PrivateRoute allowedRoles={['patient']}><Layout><NewTest /></Layout></PrivateRoute>}
+            />
+            <Route
+              path="/history"
+              element={<PrivateRoute allowedRoles={['patient']}><Layout><History /></Layout></PrivateRoute>}
+            />
+            <Route
+              path="/chatbot"
+              element={<PrivateRoute><Layout><Chatbot /></Layout></PrivateRoute>}
+            />
+            <Route
+              path="/orders"
+              element={<PrivateRoute allowedRoles={['patient']}><Layout><Orders /></Layout></PrivateRoute>}
+            />
+            <Route
+              path="/profile"
+              element={<PrivateRoute><Layout><Profile /></Layout></PrivateRoute>}
+            />
+            <Route
+              path="/therapy"
+              element={<PrivateRoute allowedRoles={['patient']}><Layout><Therapy /></Layout></PrivateRoute>}
+            />
+            <Route
+              path="/comprehensive-screening"
+              element={<PrivateRoute allowedRoles={['patient']}><Layout><ComprehensiveScreening /></Layout></PrivateRoute>}
+            />
+            <Route
+              path="/nutrition-planner"
+              element={<PrivateRoute allowedRoles={['patient']}><Layout><NutritionPlanner /></Layout></PrivateRoute>}
+            />
+            <Route
+              path="/consult"
+              element={<PrivateRoute allowedRoles={['patient']}><Layout><Consult /></Layout></PrivateRoute>}
+            />
+            <Route
+              path="/consult/:doctorId/book"
+              element={<PrivateRoute allowedRoles={['patient']}><Layout><DoctorBooking /></Layout></PrivateRoute>}
+            />
+            <Route
+              path="/reports/:reportId"
+              element={<PrivateRoute><Layout><ReportDetails /></Layout></PrivateRoute>}
+            />
+            <Route
+              path="/appointments/:appointmentId/communication"
+              element={<PrivateRoute><Layout><AppointmentCommunication /></Layout></PrivateRoute>}
+            />
+          </Routes>
+        </Router>
+      </LanguageProvider>
     </AuthProvider>
   );
 }

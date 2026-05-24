@@ -50,6 +50,14 @@ FOLLOWUP_WEBSITE_MESSAGE = os.getenv(
     "FOLLOWUP_WEBSITE_MESSAGE",
     "For further screening, please visit our website and complete the spiral and wave drawing checks.",
 ).strip()
+DOCTOR_FOLLOWUP_MESSAGE = os.getenv(
+    "DOCTOR_FOLLOWUP_MESSAGE",
+    "On the website, you can contact a doctor, discuss your symptoms, and receive guidance on the next treatment or prescription steps if needed.",
+).strip()
+EMAIL_FOLLOWUP_MESSAGE = os.getenv(
+    "EMAIL_FOLLOWUP_MESSAGE",
+    "You will also receive an email summary with your result and the next steps.",
+).strip()
 
 
 def _cleanup_sessions() -> None:
@@ -192,6 +200,41 @@ def _gather_speech(action_url: str, prompt: str) -> str:
 
 def _hangup() -> str:
     return "<Hangup/>"
+
+
+def _build_result_messages(result: dict[str, Any]) -> list[str]:
+    risk = str(result.get("risk") or "Moderate").strip() or "Moderate"
+    risk_lower = risk.lower()
+    base_message = str(result.get("message") or f"Risk level is {risk}").strip()
+
+    messages = [f"Based on your voice sample, your risk level is {risk}.", base_message]
+
+    if risk_lower in {"high", "moderate"}:
+        messages.extend(
+            [
+                "This means there may be signs that can be associated with Parkinson's disease, such as tremor, voice weakness, slower movement, stiffness, or changes in coordination.",
+                "This call is only a screening result and not a final medical diagnosis, so a clinical evaluation is important.",
+                FOLLOWUP_WEBSITE_MESSAGE,
+                DOCTOR_FOLLOWUP_MESSAGE,
+                EMAIL_FOLLOWUP_MESSAGE,
+            ]
+        )
+    else:
+        messages.extend(
+            [
+                "Your result looks lower risk right now, which is encouraging for your general health, voice stability, and movement symptoms.",
+                "Even so, if you notice tremors, stiffness, slower movement, balance problems, or voice changes, please do a full screening and speak with a doctor early.",
+                FOLLOWUP_WEBSITE_MESSAGE,
+                DOCTOR_FOLLOWUP_MESSAGE,
+                EMAIL_FOLLOWUP_MESSAGE,
+            ]
+        )
+
+    return [message for message in messages if message]
+
+
+def _build_agent_reply(result: dict[str, Any]) -> str:
+    return " ".join(_build_result_messages(result))
 
 
 def _run_twilio_analysis(call_id: str) -> None:
@@ -406,7 +449,7 @@ def voice_agent_webhook() -> Any:
             jsonify(
                 _agent_response(
                     call_id=call_id,
-                    reply=f"Based on your voice, your risk level is {result['risk']}. {result['message']}",
+                    reply=_build_agent_reply(result),
                     stage=session["stage"],
                     end_call=True,
                     analysis=result,
@@ -422,7 +465,7 @@ def voice_agent_webhook() -> Any:
         jsonify(
             _agent_response(
                 call_id=call_id,
-                reply=f"Based on your voice, your risk level is {result['risk']}. {result['message']}",
+                reply=_build_agent_reply(result),
                 stage="complete",
                 end_call=True,
                 analysis=result,
@@ -544,12 +587,7 @@ def twilio_finalize() -> Any:
         "message": "I could not fully analyze the voice sample, so this result is limited.",
         "model_used": "twilio_missing_result_fallback",
     }
-    return _twiml_response(
-        _say(f"Based on your voice, your risk level is {result['risk']}."),
-        _say(result["message"]),
-        _say(FOLLOWUP_WEBSITE_MESSAGE),
-        _hangup(),
-    )
+    return _twiml_response(*[_say(message) for message in _build_result_messages(result)], _hangup())
 
 
 if __name__ == "__main__":

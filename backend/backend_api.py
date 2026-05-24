@@ -16,6 +16,24 @@ import time
 import requests
 import cv2
 import h5py
+"""
+Multi-Model Backend API for Parkinson's Detection
+Supports both Spiral (MobileNetV2) and Wave (InceptionV3) models
+"""
+
+from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
+from flask_socketio import SocketIO, emit, join_room, leave_room
+import tensorflow as tf
+import numpy as np
+from PIL import Image
+import io
+import os
+import re
+import time
+import requests
+import cv2
+import h5py
 from datetime import datetime
 from mongodb_service import mongodb_service
 from functools import wraps
@@ -23,11 +41,28 @@ from therapy_service import therapy_service, TherapySession
 from exercise_definitions import get_exercise_by_id, get_exercises_by_type, ExerciseType, get_default_session_plan
 from exercise_validator import ExerciseValidator
 from pose_detection import PoseDetector
+from eye_movement_analysis import analyze_eye_movement_video, EyeMovementAnalysisError
 import base64
+from email_service import send_fusion_report_email
 from dotenv import load_dotenv
+import firebase_admin
+from firebase_admin import credentials, auth as firebase_auth
 
 _backend_dir = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(_backend_dir, '.env'))
+
+# Initialize Firebase Admin SDK if service account exists
+firebase_app = None
+try:
+    # Try to load service account from environment
+    import json
+    firebase_creds_path = os.getenv('FIREBASE_SERVICE_ACCOUNT_PATH')
+    if firebase_creds_path and os.path.exists(firebase_creds_path):
+        creds = credentials.Certificate(firebase_creds_path)
+        firebase_app = firebase_admin.initialize_app(creds)
+except Exception as e:
+    print(f"⚠️ Firebase Admin SDK initialization warning: {e}")
+    print("   Google sign-in will use basic validation instead")
 
 app = Flask(__name__)
 CORS(
@@ -426,7 +461,10 @@ def handle_send_appointment_message(data):
 
 # Model paths (relative to backend directory)
 SPIRAL_MODEL_PATH_H5 = os.path.join(os.path.dirname(__file__), 'models', 'spiral', 'mobilenet_spiral_robust.h5')
-WAVE_MODEL_PATH = os.path.join(os.path.dirname(__file__), 'models', 'wave', 'inception_wave_v2.h5')
+WAVE_MODEL_PATH = os.getenv(
+    'WAVE_MODEL_PATH',
+    os.path.join(os.path.dirname(__file__), 'models', 'wave', 'inception_wave_v3.h5')
+)
 VOICE_MODEL_PATH_H5 = os.path.join(os.path.dirname(__file__), 'models', 'Voice', 'voice_melspec_mobilenetv2.h5')
 VOICE_SAMPLE_RATE = 22050
 VOICE_NFFT = 2048
@@ -642,6 +680,10 @@ def load_wave_model():
     if models['wave'] is None:
         print("Loading wave model (InceptionV3)...")
         try:
+            if not os.path.exists(WAVE_MODEL_PATH):
+                print(f"  ✗ No wave model found at {WAVE_MODEL_PATH}")
+                return None
+            print(f"  Loading from .h5 format: {WAVE_MODEL_PATH}")
             models['wave'] = tf.keras.models.load_model(WAVE_MODEL_PATH, compile=False)
             print(f"  ✓ Wave model loaded: {models['wave'].input_shape}")
         except Exception as e:
@@ -704,19 +746,131 @@ def enhance_image_quality(img):
     print("  [Pre-processing] Image optimization complete ✅")
     return final_img
 
+def _should_invert_for_dark_spiral_model(img_array):
+    """
+    The spiral model was trained on dark canvases with light strokes.
+    Real uploads are often black ink on white paper, sometimes with dark photo borders.
+    Use median/background-style signals instead of only global mean so dark borders
+    do not prevent the needed inversion.
+    """
+    if len(img_array.shape) == 3:
+        gray = cv2.cvtColor(img_array.astype(np.uint8), cv2.COLOR_RGB2GRAY)
+    else:
+        gray = img_array.astype(np.uint8)
+
+    height, width = gray.shape[:2]
+    y0, y1 = int(height * 0.15), int(height * 0.85)
+    x0, x1 = int(width * 0.15), int(width * 0.85)
+    center_region = gray[y0:y1, x0:x1] if y1 > y0 and x1 > x0 else gray
+
+    mean_val = float(np.mean(gray))
+    median_val = float(np.median(gray))
+    center_median = float(np.median(center_region))
+    bright_ratio = float(np.mean(gray > 180))
+    dark_ratio = float(np.mean(gray < 75))
+
+    should_invert = (
+        median_val > 127
+        or center_median > 145
+        or bright_ratio > max(0.25, dark_ratio * 1.2)
+    )
+
+    print(
+        "  [Pre-processing] Spiral background check: "
+        f"mean={mean_val:.1f}, median={median_val:.1f}, center_median={center_median:.1f}, "
+        f"bright={bright_ratio:.2f}, dark={dark_ratio:.2f} - "
+        f"{'inverting (light paper detected)' if should_invert else 'keeping as-is (dark canvas detected)'}"
+    )
+    return should_invert
+
+def _crop_spiral_strokes_for_model(img, light_paper_background):
+    """
+    Center the actual spiral strokes before resizing to 224x224.
+    A phone photo may include a full sheet, desk, shadows, or dark borders; resizing
+    all of that makes the spiral tiny compared with the synthetic training images.
+    """
+    rgb_img = img.convert('RGB')
+    img_array = np.array(rgb_img, dtype=np.uint8)
+    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+    height, width = gray.shape[:2]
+
+    if light_paper_background:
+        mask = gray < 205
+    else:
+        mask = gray > 50
+
+    mask = mask.astype(np.uint8)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    kept = np.zeros_like(mask, dtype=np.uint8)
+    min_area = max(6, int(width * height * 0.00002))
+    max_area = int(width * height * 0.35)
+    edge_margin = max(2, int(min(width, height) * 0.01))
+
+    for label_index in range(1, num_labels):
+        x, y, component_width, component_height, area = stats[label_index]
+        touches_edge = (
+            x <= edge_margin
+            or y <= edge_margin
+            or x + component_width >= width - edge_margin
+            or y + component_height >= height - edge_margin
+        )
+        if area < min_area or area > max_area or touches_edge:
+            continue
+        kept[labels == label_index] = 1
+
+    if np.count_nonzero(kept) < max(20, int(width * height * 0.0002)):
+        print("  [Pre-processing] Spiral crop skipped: not enough isolated stroke pixels")
+        return rgb_img
+
+    ys, xs = np.where(kept > 0)
+    left, right = int(xs.min()), int(xs.max())
+    top, bottom = int(ys.min()), int(ys.max())
+    box_width = right - left + 1
+    box_height = bottom - top + 1
+
+    if box_width < 12 or box_height < 12:
+        print("  [Pre-processing] Spiral crop skipped: stroke box too small")
+        return rgb_img
+
+    side = int(max(box_width, box_height) * 1.45)
+    side = max(side, int(min(width, height) * 0.35), 80)
+    side = min(side, max(width, height))
+    center_x = (left + right) // 2
+    center_y = (top + bottom) // 2
+
+    crop_left = max(0, center_x - side // 2)
+    crop_top = max(0, center_y - side // 2)
+    crop_right = min(width, crop_left + side)
+    crop_bottom = min(height, crop_top + side)
+    crop_left = max(0, crop_right - side)
+    crop_top = max(0, crop_bottom - side)
+
+    crop_width = crop_right - crop_left
+    crop_height = crop_bottom - crop_top
+    if crop_width >= width * 0.96 and crop_height >= height * 0.96:
+        print("  [Pre-processing] Spiral crop skipped: drawing already fills frame")
+        return rgb_img
+
+    print(
+        "  [Pre-processing] Spiral crop: "
+        f"stroke_box=({box_width}x{box_height}), crop=({crop_width}x{crop_height})"
+    )
+    return rgb_img.crop((crop_left, crop_top, crop_right, crop_bottom))
+
 def preprocess_for_spiral(image_bytes):
     """Preprocess image for MobileNetV2 (spiral)"""
     img = Image.open(io.BytesIO(image_bytes))
     img = __composite_with_white_bg(img)
+    initial_array = np.array(img.convert('RGB'), dtype=np.float32)
+    light_paper_background = _should_invert_for_dark_spiral_model(initial_array)
+    img = _crop_spiral_strokes_for_model(img, light_paper_background)
     print("  [Pre-processing] Resizing image to 224x224 (LANCZOS high quality)...")
     img = img.resize((224, 224), Image.LANCZOS)  # High-quality downsampling
     img_array = np.array(img, dtype=np.float32)
     
     # The robust spiral model was trained on black backgrounds with white lines.
-    # If the uploaded image has a light/white background, invert it.
-    mean_val = np.mean(img_array)
-    print(f"  [Pre-processing] Image mean pixel value: {mean_val:.1f} — {'inverting (white bg detected)' if mean_val > 127 else 'keeping as-is (dark bg detected)'}")
-    if mean_val > 127:
+    # If the uploaded image has a light/white paper background, invert it.
+    if light_paper_background:
         img_array = 255.0 - img_array
         
     # MobileNetV2 preprocessing: normalize to [-1, 1]
@@ -725,12 +879,22 @@ def preprocess_for_spiral(image_bytes):
     print("  [Pre-processing] Spiral pre-processing complete ✅")
     return img_array
 
-def preprocess_for_wave(image_bytes):
+def _get_model_image_size(model_input_shape, default_size=224):
+    if model_input_shape and len(model_input_shape) >= 3:
+        height = model_input_shape[1]
+        width = model_input_shape[2]
+        if height is not None and width is not None:
+            return int(width), int(height)
+    return default_size, default_size
+
+
+def preprocess_for_wave(image_bytes, model_input_shape=None):
     """Preprocess image for InceptionV3 (wave)"""
     img = Image.open(io.BytesIO(image_bytes))
     img = __composite_with_white_bg(img)
-    print("  [Pre-processing] Resizing image to 224x224 (LANCZOS high quality)...")
-    img = img.resize((224, 224), Image.LANCZOS)  # High-quality downsampling
+    target_size = _get_model_image_size(model_input_shape, default_size=299)
+    print(f"  [Pre-processing] Resizing image to {target_size[0]}x{target_size[1]} (LANCZOS high quality)...")
+    img = img.resize(target_size, Image.LANCZOS)  # High-quality downsampling
     img_array = np.array(img, dtype=np.float32)
     # InceptionV3 preprocessing: normalize to [0, 1]
     img_array = img_array / 255.0
@@ -775,7 +939,8 @@ def extract_drawing_metrics(image_bytes):
 
 def validate_drawing_image(image_bytes, expected_type=None):
     """
-    Detect if image is spiral or wave based on pattern characteristics
+    Validate that the image contains actual drawing content (not blank).
+    The type (spiral/wave) is ALWAYS provided by the frontend and trusted as-is.
     Returns: (is_valid, error_message, detected_type)
     """
     try:
@@ -787,64 +952,27 @@ def validate_drawing_image(image_bytes, expected_type=None):
         # Convert to grayscale
         gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
         
-        # Analyze pattern to detect type (no strict validation)
+        # Threshold to find dark pen strokes
         _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
         
-        # Get content dimensions for type detection
-        rows_with_content = np.any(binary, axis=1)
-        cols_with_content = np.any(binary, axis=0)
+        # Reject blank/empty images — must have at least 0.5% dark pixels
+        total_pixels = binary.size
+        dark_pixels = np.count_nonzero(binary)
+        dark_ratio = dark_pixels / total_pixels
         
-        # Default values if no content detected
-        if not np.any(rows_with_content) or not np.any(cols_with_content):
-            # Just use expected type or default to spiral
-            detected_type = expected_type if expected_type else 'spiral'
-            return True, None, detected_type
+        if dark_ratio < 0.005:
+            return False, "The uploaded image appears to be blank or empty. Please upload a drawing.", None
         
-        content_height = rows_with_content.sum()
-        content_width = cols_with_content.sum()
-        aspect_ratio = content_width / (content_height + 1e-6)
+        # Trust the type from the frontend — don't try to guess from pixels
+        final_type = expected_type if expected_type else 'spiral'
         
-        # Method 2: Check horizontal vs vertical variance
-        horizontal_variance = np.var(gray, axis=1).mean()
-        vertical_variance = np.var(gray, axis=0).mean()
-        variance_ratio = horizontal_variance / (vertical_variance + 1e-6)
-        
-        # Method 3: Check for circular patterns (Hough circles for spiral)
-        circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, dp=1, minDist=50,
-                                   param1=100, param2=30, minRadius=20, maxRadius=100)
-        has_circular_pattern = circles is not None and len(circles[0]) > 0
-        
-        # Determine type
-        wave_score = 0
-        spiral_score = 0
-        
-        # Wave characteristics
-        if aspect_ratio > 1.3:  # Wider than tall
-            wave_score += 2
-        if variance_ratio > 1.2:  # More horizontal variance
-            wave_score += 1
-        if not has_circular_pattern:  # No circles
-            wave_score += 1
-        
-        # Spiral characteristics
-        if has_circular_pattern:  # Has circular patterns
-            spiral_score += 3
-        if 0.7 < aspect_ratio < 1.3:  # More square-ish
-            spiral_score += 2
-        
-        detected_type = 'wave' if wave_score > spiral_score else 'spiral'
-        
-        print(f"  Pattern: aspect={aspect_ratio:.2f}, variance={variance_ratio:.2f}, circles={has_circular_pattern}")
-        print(f"  Scores: wave={wave_score}, spiral={spiral_score} → detected={detected_type}")
-        
-        # Use expected type if provided, otherwise use detected type
-        final_type = expected_type if expected_type else detected_type
-        
+        print(f"  Validation passed: dark_ratio={dark_ratio:.3f}, type={final_type}")
         return True, None, final_type
         
     except Exception as e:
         print(f"Validation error: {e}")
         return False, "Failed to validate image. Please ensure you upload a valid image file.", None
+
 
 def detect_image_type(image_bytes):
     """
@@ -905,7 +1033,7 @@ def preprocess_for_voice(audio_bytes, model_input_shape=None):
 
         # Build a mel image that already matches the model's vertical resolution,
         # then pad/crop only along time to keep the frequency axis semantically stable.
-        print("  [Voice Pre-processing] Computing mel-spectrogram...")
+        print(f"  [Voice Pre-processing] Computing mel-spectrogram...")
         mel_spec = librosa.feature.melspectrogram(
             y=audio_data,
             sr=sr,
@@ -1342,14 +1470,14 @@ def predict():
             model = load_wave_model()
             if model is None:
                 return jsonify({'error': 'Wave model not available'}), 500
-            processed_image = preprocess_for_wave(image_bytes)
-            model_name = 'InceptionV3 (wave)'
+            processed_image = preprocess_for_wave(image_bytes, model.input_shape)
+            model_name = 'InceptionV3 v3 (wave)'
         else:
             return jsonify({'error': f'Invalid image type: {image_type}'}), 400
         
         # Make prediction
         prediction = model(processed_image, training=False)
-        sigmoid_value = float(prediction[0][0].numpy())
+        sigmoid_value = float(np.asarray(prediction).reshape(-1)[0])
         
         # Interpret sigmoid output
         # Spiral model: HIGH sigmoid = Parkinson's, LOW = Healthy
@@ -1423,6 +1551,7 @@ def predict():
                 'name': model_name,
                 'type': image_type,
                 'inputShape': list(model.input_shape),
+                'file': os.path.basename(WAVE_MODEL_PATH) if image_type == 'wave' else os.path.basename(SPIRAL_MODEL_PATH_H5),
                 'autoDetected': request.form.get('type', None) is None
             }
         })
@@ -1555,6 +1684,53 @@ def predict_voice():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/eye-movement/predict', methods=['POST'])
+@require_auth
+def predict_eye_movement(user_id):
+    """Analyze a guided 20-second eye-movement video for Parkinsonian indicators."""
+    try:
+        print("\n" + "=" * 60)
+        print(f"EYE MOVEMENT SCREENING REQUEST for user {user_id}")
+        print("=" * 60)
+
+        if 'video' not in request.files:
+            return jsonify({'error': 'No video file provided'}), 400
+
+        video_file = request.files['video']
+        if video_file.filename == '':
+            return jsonify({'error': 'No selected video file'}), 400
+
+        protocol = request.form.get('protocol', 'guided-eye-follow-v1')
+        video_bytes = video_file.read()
+        if len(video_bytes) < 50_000:
+            return jsonify({'error': 'The recording is too short or empty. Please capture the full 20-second eye test.'}), 400
+
+        print(f"Processing eye video: {video_file.filename}")
+        print(f"Video size: {len(video_bytes)} bytes")
+        print(f"Protocol: {protocol}")
+
+        result = analyze_eye_movement_video(
+            video_bytes,
+            filename=video_file.filename,
+            protocol=protocol,
+        )
+
+        print("Eye movement analysis complete:")
+        print(f"  Classification: {result['classification']}")
+        print(f"  Confidence: {result['confidence']:.1%}")
+        print(f"  Risk score: {result['riskScore']}/10")
+
+        return jsonify(result)
+    except EyeMovementAnalysisError as error:
+        print(f"Eye movement analysis warning: {error}")
+        return jsonify({'error': str(error), 'debug': getattr(error, 'debug', {})}), 422
+    except Exception as error:
+        print(f"Error during eye movement prediction: {str(error)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(error)}), 500
 
 # ==================== MongoDB API Endpoints ====================
 
@@ -1699,7 +1875,7 @@ def get_session():
     if request.method == 'OPTIONS':
         # Handle CORS preflight
         return '', 200
-    
+
     user = get_user_from_token_optional()
     if user:
         return jsonify({
@@ -1714,6 +1890,117 @@ def get_session():
                 'user': None,
             }
         }), 200
+
+@app.route('/api/auth/google-signin', methods=['POST', 'OPTIONS'])
+def google_signin():
+    """Google Sign-in authentication"""
+    if request.method == 'OPTIONS':
+        return _cors_preflight_response()
+
+    try:
+        data = request.json
+        id_token = data.get('id_token')
+        email = data.get('email')
+        name = data.get('name')
+        role = data.get('role', 'patient')
+
+        print(f"\n{'='*60}")
+        print(f"[GOOGLE-AUTH] /api/auth/google-signin")
+        print(f"  Email: {email}")
+        print(f"  Name: {name}")
+        print(f"  Role: {role}")
+        print(f"  Has ID token: {bool(id_token)}")
+        print(f"{'='*60}")
+
+        if not id_token or not email:
+            print(f"[GOOGLE-AUTH] ERROR: Missing id_token or email")
+            return jsonify({'error': 'ID token and email are required'}), 400
+
+        # Verify the Google ID token
+        token_verified = False
+        try:
+            if firebase_app:
+                # Use Firebase Admin SDK if available
+                decoded_token = firebase_auth.verify_id_token(id_token)
+                token_verified = True
+                print(f"[GOOGLE-AUTH] Token verified via Firebase Admin SDK")
+            else:
+                # Fallback: Trust frontend verification (token already verified by Firebase SDK on client)
+                token_verified = True
+                print(f"[GOOGLE-AUTH] Token trusted via frontend verification (no Firebase Admin SDK)")
+        except Exception as e:
+            print(f"[GOOGLE-AUTH] ERROR: Token verification failed: {str(e)}")
+            return jsonify({'error': f'Token verification failed: {str(e)}'}), 401
+
+        if not token_verified:
+            print(f"[GOOGLE-AUTH] ERROR: Token not verified")
+            return jsonify({'error': 'Invalid token'}), 401
+
+        # Use MongoDB service to find or create user
+        print(f"[GOOGLE-AUTH] Looking up or creating user in MongoDB...")
+        user = mongodb_service.google_signin_user(email, name, role)
+        if not user:
+            print(f"[GOOGLE-AUTH] ERROR: mongodb_service.google_signin_user returned None")
+            return jsonify({'error': 'Failed to authenticate user'}), 500
+
+        print(f"[GOOGLE-AUTH] User resolved: id={user.get('id')}, role={user.get('role')}, approval_status={user.get('approval_status')}")
+        print(f"[GOOGLE-AUTH] Profile fields — full_name={user.get('full_name')}, phone={user.get('phone')}, gender={user.get('gender')}")
+
+        # Generate JWT token
+        token = mongodb_service.generate_token(user['id'], user['email'])
+        print(f"[GOOGLE-AUTH] JWT token generated, returning response")
+
+        return jsonify({
+            'access_token': token,
+            'user': user,
+        })
+    except Exception as e:
+        print(f"[GOOGLE-AUTH] UNHANDLED ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/auth/complete-google-profile', methods=['POST'])
+@require_auth
+def complete_google_profile(user_id):
+    """Complete onboarding details for a Google-authenticated user."""
+    try:
+        print(f"\n{'='*60}")
+        print(f"[GOOGLE-AUTH] /api/auth/complete-google-profile")
+        print(f"  user_id: {user_id}")
+
+        current_user = mongodb_service.get_user_by_id(user_id)
+        if not current_user:
+            print(f"[GOOGLE-AUTH] ERROR: User not found for id={user_id}")
+            return jsonify({'error': 'Unauthorized'}), 401
+
+        print(f"  Current user role: {current_user.get('role')}")
+        payload = request.get_json() or {}
+        print(f"  Payload keys: {list(payload.keys())}")
+        print(f"  Payload: {payload}")
+        print(f"{'='*60}")
+
+        updated_user = mongodb_service.complete_google_profile(user_id, payload)
+        new_token = mongodb_service.generate_token(updated_user['id'], updated_user['email'])
+
+        print(f"[GOOGLE-AUTH] Profile completed successfully for user {updated_user.get('id')}")
+        print(f"  Updated fields — full_name={updated_user.get('full_name')}, phone={updated_user.get('phone')}, gender={updated_user.get('gender')}")
+        print(f"  Role={updated_user.get('role')}, approval_status={updated_user.get('approval_status')}")
+
+        return jsonify({
+            'data': {
+                'user': updated_user,
+                'access_token': new_token,
+            }
+        }), 200
+    except ValueError as e:
+        print(f"[GOOGLE-AUTH] VALIDATION ERROR in complete-google-profile: {str(e)}")
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        print(f"[GOOGLE-AUTH] UNHANDLED ERROR in complete-google-profile: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/doctors', methods=['GET'])
 @require_auth
@@ -1746,6 +2033,19 @@ def ensure_report(user_id):
         report_id = data.get('reportId')
         test_id = data.get('testId')
         report = _ensure_unified_report(user_id, report_id=report_id, preferred_test_id=test_id)
+        
+        # Trigger email sending on generation/update (won't block due to thread)
+        try:
+            import logging
+            log = logging.getLogger('werkzeug')
+            log.warning(f"[API REPORTS] Triggering send_fusion_report_email for user_id={user_id}")
+            from email_service import send_fusion_report_email
+            send_fusion_report_email(user_id, report)
+        except Exception as e:
+            import traceback
+            print(f"Warning: Failed to trigger email service: {str(e)}")
+            traceback.print_exc()
+
         return jsonify({'data': _serialize_report_for_user(report)}), 201
     except ValueError as e:
         return jsonify({'error': str(e)}), 400

@@ -30,6 +30,7 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
 import numpy as np
 import tensorflow as tf
+import cv2
 from PIL import Image
 
 # -----------------------------------------------------------------------------
@@ -37,7 +38,7 @@ from PIL import Image
 # -----------------------------------------------------------------------------
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 SPIRAL_MODEL_PATH_H5 = os.path.join(_BACKEND_DIR, "models", "spiral", "mobilenet_spiral_robust.h5")
-WAVE_MODEL_PATH = os.path.join(_BACKEND_DIR, "models", "wave", "inception_wave_v2.h5")
+WAVE_MODEL_PATH = os.path.join(_BACKEND_DIR, "models", "wave", "inception_wave_v3.h5")
 VOICE_MODEL_PATH_H5 = os.path.join(_BACKEND_DIR, "models", "Voice", "voice_melspec_mobilenetv2.h5")
 
 VOICE_SAMPLE_RATE = 22050
@@ -64,22 +65,108 @@ def _composite_with_white_bg(img: Image.Image) -> Image.Image:
     return img
 
 
+def should_invert_for_dark_spiral_model(img_array: np.ndarray) -> bool:
+    gray = np.asarray(img_array, dtype=np.uint8)
+    if gray.ndim == 3:
+        gray = np.mean(gray, axis=2).astype(np.uint8)
+
+    height, width = gray.shape[:2]
+    y0, y1 = int(height * 0.15), int(height * 0.85)
+    x0, x1 = int(width * 0.15), int(width * 0.85)
+    center_region = gray[y0:y1, x0:x1] if y1 > y0 and x1 > x0 else gray
+
+    median_val = float(np.median(gray))
+    center_median = float(np.median(center_region))
+    bright_ratio = float(np.mean(gray > 180))
+    dark_ratio = float(np.mean(gray < 75))
+
+    return (
+        median_val > 127
+        or center_median > 145
+        or bright_ratio > max(0.25, dark_ratio * 1.2)
+    )
+
+
+def crop_spiral_strokes_for_model(img: Image.Image, light_paper_background: bool) -> Image.Image:
+    rgb_img = img.convert("RGB")
+    img_array = np.array(rgb_img, dtype=np.uint8)
+    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+    height, width = gray.shape[:2]
+
+    mask = (gray < 205) if light_paper_background else (gray > 50)
+    mask = mask.astype(np.uint8)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    kept = np.zeros_like(mask, dtype=np.uint8)
+    min_area = max(6, int(width * height * 0.00002))
+    max_area = int(width * height * 0.35)
+    edge_margin = max(2, int(min(width, height) * 0.01))
+
+    for label_index in range(1, num_labels):
+        x, y, component_width, component_height, area = stats[label_index]
+        touches_edge = (
+            x <= edge_margin
+            or y <= edge_margin
+            or x + component_width >= width - edge_margin
+            or y + component_height >= height - edge_margin
+        )
+        if area < min_area or area > max_area or touches_edge:
+            continue
+        kept[labels == label_index] = 1
+
+    if np.count_nonzero(kept) < max(20, int(width * height * 0.0002)):
+        return rgb_img
+
+    ys, xs = np.where(kept > 0)
+    left, right = int(xs.min()), int(xs.max())
+    top, bottom = int(ys.min()), int(ys.max())
+    box_width = right - left + 1
+    box_height = bottom - top + 1
+    if box_width < 12 or box_height < 12:
+        return rgb_img
+
+    side = int(max(box_width, box_height) * 1.45)
+    side = max(side, int(min(width, height) * 0.35), 80)
+    side = min(side, max(width, height))
+    center_x = (left + right) // 2
+    center_y = (top + bottom) // 2
+    crop_left = max(0, center_x - side // 2)
+    crop_top = max(0, center_y - side // 2)
+    crop_right = min(width, crop_left + side)
+    crop_bottom = min(height, crop_top + side)
+    crop_left = max(0, crop_right - side)
+    crop_top = max(0, crop_bottom - side)
+
+    if (crop_right - crop_left) >= width * 0.96 and (crop_bottom - crop_top) >= height * 0.96:
+        return rgb_img
+    return rgb_img.crop((crop_left, crop_top, crop_right, crop_bottom))
+
+
 def preprocess_for_spiral(image_bytes: bytes) -> np.ndarray:
     img = Image.open(io.BytesIO(image_bytes))
     img = _composite_with_white_bg(img)
+    light_paper_background = should_invert_for_dark_spiral_model(np.array(img.convert("RGB"), dtype=np.float32))
+    img = crop_spiral_strokes_for_model(img, light_paper_background)
     img = img.resize((224, 224), Image.LANCZOS)
     img_array = np.array(img, dtype=np.float32)
-    mean_val = np.mean(img_array)
-    if mean_val > 127:
+    if light_paper_background:
         img_array = 255.0 - img_array
     img_array = (img_array / 127.5) - 1.0
     return np.expand_dims(img_array, axis=0)
 
 
-def preprocess_for_wave(image_bytes: bytes) -> np.ndarray:
+def _get_model_image_size(model_input_shape: Optional[Tuple], default_size: int = 224) -> Tuple[int, int]:
+    if model_input_shape and len(model_input_shape) >= 3:
+        height = model_input_shape[1]
+        width = model_input_shape[2]
+        if height is not None and width is not None:
+            return int(width), int(height)
+    return default_size, default_size
+
+
+def preprocess_for_wave(image_bytes: bytes, model_input_shape: Optional[Tuple] = None) -> np.ndarray:
     img = Image.open(io.BytesIO(image_bytes))
     img = _composite_with_white_bg(img)
-    img = img.resize((224, 224), Image.LANCZOS)
+    img = img.resize(_get_model_image_size(model_input_shape, default_size=299), Image.LANCZOS)
     img_array = np.array(img, dtype=np.float32) / 255.0
     return np.expand_dims(img_array, axis=0)
 
@@ -265,7 +352,7 @@ def evaluate_wave(model_path: str, healthy_dir: str, parkinsons_dir: str) -> int
     y_pred = np.zeros_like(y_true)
     for i, p in enumerate(paths):
         with open(p, "rb") as f:
-            x = preprocess_for_wave(f.read())
+            x = preprocess_for_wave(f.read(), model.input_shape)
         sig = predict_wave_class(model, x)
         y_pred[i] = wave_pred_label(sig)
     run_eval("Wave (Inception wave)", y_true, y_pred)

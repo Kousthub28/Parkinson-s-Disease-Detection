@@ -6,9 +6,8 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:5000', // Flask backend URL
+        target: 'http://localhost:5000',
         changeOrigin: true,
-        // Don't rewrite - backend already uses /api prefix
       },
       '/socket.io': {
         target: 'http://localhost:5000',

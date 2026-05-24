@@ -22,10 +22,19 @@ export interface VoicePrediction {
   modelUsed?: string;
 }
 
-export async function predictVoice(audioBlob: Blob): Promise<VoicePrediction> {
+const getVoiceFileName = (blob: Blob, fallbackName: string) => {
+  if (fallbackName) return fallbackName;
+  if (blob.type.includes('mp4')) return 'voice.mp4';
+  if (blob.type.includes('mpeg')) return 'voice.mp3';
+  if (blob.type.includes('webm')) return 'voice.webm';
+  if (blob.type.includes('ogg')) return 'voice.ogg';
+  return 'voice.wav';
+};
+
+export async function predictVoice(audioBlob: Blob, fileName = 'voice.wav'): Promise<VoicePrediction> {
   try {
     const formData = new FormData();
-    formData.append('audio', audioBlob, 'voice.wav');
+    formData.append('audio', audioBlob, getVoiceFileName(audioBlob, fileName));
 
     const response = await fetch('http://localhost:5000/api/voice/predict', {
       method: 'POST',
